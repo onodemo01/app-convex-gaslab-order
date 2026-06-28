@@ -14,11 +14,11 @@
 #   - npx convex login 済み / vercel login 済み / vercel link 済み
 #   - どこから実行してもOK（自動で repo 直下へ移動）
 # 任意の環境変数:
-#   PUBLIC_URL  最後の動作検証に使う公開URL（既定: https://sorte-order.vercel.app）
+#   PUBLIC_URL  最後の動作検証に使う公開URL（既定: https://gaslab-order.vercel.app）
 #
 set -euo pipefail
 
-PUBLIC_URL="${PUBLIC_URL:-https://sorte-order.vercel.app}" # 検証用の公開URL
+PUBLIC_URL="${PUBLIC_URL:-https://gaslab-order.vercel.app}" # 検証用の公開URL
 SHELL_HTML="_shell.html"                                   # SPA shell のファイル名
 
 # --- repo 直下へ移動（このスクリプトの1つ上） ---
@@ -63,7 +63,7 @@ for p in / /floor /kitchen /menu /qr /analytics /demo "/t/gaslab/verifytoken"; d
 done
 
 if [ "$fail" -ne 0 ]; then
-  echo "✖ 200 以外のルートあり。上のコードを確認（PUBLIC_URL=$PUBLIC_URL）。" >&2
+  echo "✖ 200 以外のルートあり。上のコードを確認（PUBLIC_URL=${PUBLIC_URL}）。" >&2
   exit 1
 fi
 
