@@ -19,6 +19,7 @@ import type * as orders from "../orders.js";
 import type * as sessions from "../sessions.js";
 import type * as stores from "../stores.js";
 import type * as stripe from "../stripe.js";
+import type * as surveys from "../surveys.js";
 import type * as tables from "../tables.js";
 
 import type {
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   sessions: typeof sessions;
   stores: typeof stores;
   stripe: typeof stripe;
+  surveys: typeof surveys;
   tables: typeof tables;
 }>;
 

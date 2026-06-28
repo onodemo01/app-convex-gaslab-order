@@ -31,7 +31,7 @@ function tableClaimKey(slug: string, tableToken: string): string {
 // 次回クーポンの表示用コード（表示のみ・検証なし）。sessionId 由来なので再読込でも不変。
 function couponCode(sessionId: string): string {
   const tail = sessionId.replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase();
-  return `SORTE-${tail}`;
+  return `GASLAB-${tail}`;
 }
 
 function GuestTablePage() {
@@ -162,6 +162,7 @@ function GuestTableContent({
   const { data: orders } = useQuery(convexQuery(api.orders.listGuestOrders, { slug, tableToken, sessionId }));
   const addOrder = useMutation(api.orders.addGuestOrder);
   const recordSoldOut = useMutation(api.orders.recordSoldOut);
+  const submitSurvey = useMutation(api.surveys.submit);
   const checkout = useAction(api.stripe.createTableCheckoutSession);
   const recover = useAction(api.stripe.recoverGuestCheckout);
 
@@ -173,6 +174,12 @@ function GuestTableContent({
   const [busy, setBusy] = useState(false);
   const [farewell, setFarewell] = useState(false);
   const [secsLeft, setSecsLeft] = useState(5);
+  // 会計後アンケート（任意）
+  const [surveyDone, setSurveyDone] = useState(false);
+  const [sat, setSat] = useState<number | null>(null);
+  const [gender, setGender] = useState<string | null>(null);
+  const [age, setAge] = useState<string | null>(null);
+  const [revisit, setRevisit] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; kind: 'ink' | 'green' | 'amber' | 'red' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -188,8 +195,28 @@ function GuestTableContent({
 
   // 会計完了 → 数秒「ありがとうございました」を見せてからお別れ画面へ切り替える
   // （可能ならタブも閉じる。スクリプトで開いたタブ以外はブラウザが閉じさせないので、お別れ画面が最終表示になる）。
+  // アンケート送信/スキップで surveyDone=true → 下のカウントダウンが回り、お別れ画面へ。
+  async function sendSurvey(skip: boolean) {
+    if (!skip) {
+      try {
+        await submitSurvey({
+          slug,
+          sessionId,
+          satisfaction: sat ?? undefined,
+          gender: gender ?? undefined,
+          ageGroup: age ?? undefined,
+          revisit: revisit ?? undefined,
+          couponCode: couponCode(sessionId),
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
+    setSurveyDone(true);
+  }
+
   useEffect(() => {
-    if (!settledNow || farewell) return;
+    if (!settledNow || !surveyDone || farewell) return;
     setSecsLeft(5);
     const iv = setInterval(() => {
       setSecsLeft((n) => {
@@ -207,7 +234,7 @@ function GuestTableContent({
       });
     }, 1000);
     return () => clearInterval(iv);
-  }, [settledNow, farewell]);
+  }, [settledNow, surveyDone, farewell]);
 
   const menuList = menu ?? [];
   const itemByCode = (code: string) => menuList.find((m) => m.code != null && m.code === Number(code));
@@ -370,6 +397,55 @@ function GuestTableContent({
     </div>
   );
 
+  // 会計後アンケート（任意・数タップ）。
+  const choiceBtn = (active: boolean, label: string, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      style={css(`height:32px; padding:0 11px; border-radius:3px; border:1px solid ${active ? '#171717' : '#e2e8f0'}; background:${active ? '#171717' : '#fff'}; color:${active ? '#fff' : '#475569'}; font-size:12px; font-weight:${active ? 700 : 500};`)}
+    >
+      {label}
+    </button>
+  );
+  const surveyForm = (
+    <div style={css('width:100%; margin-top:12px; padding-top:12px; border-top:1px dashed #e2e8f0; display:flex; flex-direction:column; gap:11px;')}>
+      <div style={css('font-size:12px; font-weight:700; color:#475569;')}>アンケートにご協力ください（任意・数タップ）</div>
+      <div style={css('display:flex; flex-direction:column; gap:5px; align-items:center;')}>
+        <div style={css('font-size:11px; color:#94a3b8;')}>満足度</div>
+        <div style={css('display:flex; gap:4px;')}>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button key={n} onClick={() => setSat(n)} style={css(`font-size:27px; line-height:1; background:none; border:none; padding:0 2px; cursor:pointer; color:${sat != null && n <= sat ? '#f59e0b' : '#e2e8f0'};`)}>★</button>
+          ))}
+        </div>
+      </div>
+      <div style={css('display:flex; flex-direction:column; gap:5px; align-items:center;')}>
+        <div style={css('font-size:11px; color:#94a3b8;')}>性別</div>
+        <div style={css('display:flex; gap:6px;')}>
+          {choiceBtn(gender === 'male', '男性', () => setGender('male'))}
+          {choiceBtn(gender === 'female', '女性', () => setGender('female'))}
+          {choiceBtn(gender === 'other', 'その他', () => setGender('other'))}
+        </div>
+      </div>
+      <div style={css('display:flex; flex-direction:column; gap:5px; align-items:center;')}>
+        <div style={css('font-size:11px; color:#94a3b8;')}>年代</div>
+        <div style={css('display:flex; gap:5px; flex-wrap:wrap; justify-content:center;')}>
+          {['10', '20', '30', '40', '50', '60'].map((a) => choiceBtn(age === a, a === '60' ? '60代〜' : a + '代', () => setAge(a)))}
+        </div>
+      </div>
+      <div style={css('display:flex; flex-direction:column; gap:5px; align-items:center;')}>
+        <div style={css('font-size:11px; color:#94a3b8;')}>また来たい？</div>
+        <div style={css('display:flex; gap:6px;')}>
+          {choiceBtn(revisit === 'high', 'ぜひ', () => setRevisit('high'))}
+          {choiceBtn(revisit === 'mid', 'たぶん', () => setRevisit('mid'))}
+          {choiceBtn(revisit === 'low', 'うーん', () => setRevisit('low'))}
+        </div>
+      </div>
+      <div style={css('display:flex; gap:8px; margin-top:2px;')}>
+        <button onClick={() => void sendSurvey(false)} style={css('flex:1; height:38px; border-radius:3px; border:none; background:#15803d; color:#fff; font-size:13px; font-weight:700;')}>送信する</button>
+        <button onClick={() => void sendSurvey(true)} style={css('height:38px; padding:0 14px; border-radius:3px; border:1px solid #cbd5e1; background:#fff; color:#94a3b8; font-size:12px; font-weight:500;')}>スキップ</button>
+      </div>
+    </div>
+  );
+
   return (
     <main style={css('min-height:100vh; background:#f4f5f7; display:flex; justify-content:center; padding:14px;')}>
       <div style={css('width:100%; max-width:420px; align-self:flex-start; display:flex; flex-direction:column;')}>
@@ -403,7 +479,11 @@ function GuestTableContent({
                     <div style={css('font-size:12px; color:#15803d;')}>ご利用ありがとうございました</div>
                     <div className="tnum" style={css('margin-top:6px; font-size:16px; font-weight:700; color:#171717;')}>お支払い {yen(charged)}</div>
                     {couponBox}
-                    <div style={css('margin-top:8px; font-size:11px; color:#94a3b8;')}>あと {secsLeft} 秒で画面を閉じます…</div>
+                    {surveyDone ? (
+                      <div style={css('margin-top:8px; font-size:11px; color:#94a3b8;')}>あと {secsLeft} 秒で画面を閉じます…</div>
+                    ) : (
+                      surveyForm
+                    )}
                   </>
                 ) : (
                   <>

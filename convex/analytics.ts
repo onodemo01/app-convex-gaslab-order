@@ -201,12 +201,13 @@ export const report = query({
       rangeStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 5, 1) - JST_OFFSET_MS;
     }
 
-    const [allSessions, allLines, allSoldOut, tables, menu] = await Promise.all([
+    const [allSessions, allLines, allSoldOut, tables, menu, allSurveys] = await Promise.all([
       ctx.db.query('tableSessions').withIndex('by_orgId', (q) => q.eq('orgId', orgId)).collect(),
       ctx.db.query('orderLines').withIndex('by_orgId', (q) => q.eq('orgId', orgId)).collect(),
       ctx.db.query('soldOutEvents').withIndex('by_orgId', (q) => q.eq('orgId', orgId)).collect(),
       ctx.db.query('tables').withIndex('by_orgId', (q) => q.eq('orgId', orgId)).collect(),
       ctx.db.query('menuItems').withIndex('by_orgId', (q) => q.eq('orgId', orgId)).collect(),
+      ctx.db.query('surveys').withIndex('by_orgId', (q) => q.eq('orgId', orgId)).collect(),
     ]);
     const tableLabel = new Map(tables.map((t) => [t._id, t.label]));
     const asapMap = new Map(menu.map((m) => [m._id, m.serveAsap ?? false]));
@@ -391,6 +392,30 @@ export const report = query({
             .sort((a, b) => b.openedAt - a.openedAt)
         : [];
 
-    return { period, kpis, trend, hourly, dishes: dishesRows, sessions: sessionRows };
+    // アンケート（客層）サマリ
+    const surveys = allSurveys.filter((s) => s.at >= rangeStart);
+    let satSum = 0;
+    let satCount = 0;
+    const gender = { male: 0, female: 0, other: 0 };
+    const age: Record<string, number> = { '10': 0, '20': 0, '30': 0, '40': 0, '50': 0, '60': 0 };
+    const revisit = { high: 0, mid: 0, low: 0 };
+    for (const s of surveys) {
+      if (typeof s.satisfaction === 'number') {
+        satSum += s.satisfaction;
+        satCount += 1;
+      }
+      if (s.gender === 'male' || s.gender === 'female' || s.gender === 'other') gender[s.gender] += 1;
+      if (s.ageGroup && age[s.ageGroup] !== undefined) age[s.ageGroup] += 1;
+      if (s.revisit === 'high' || s.revisit === 'mid' || s.revisit === 'low') revisit[s.revisit] += 1;
+    }
+    const survey = {
+      responses: surveys.length,
+      avgSatisfaction: satCount > 0 ? Math.round((satSum / satCount) * 10) / 10 : null,
+      gender,
+      age,
+      revisit,
+    };
+
+    return { period, kpis, trend, hourly, dishes: dishesRows, sessions: sessionRows, survey };
   },
 });

@@ -84,4 +84,19 @@ export default defineSchema({
     menuName: v.string(),
     at: v.number(),
   }).index('by_orgId', ['orgId']),
+
+  // 会計後アンケート。任意回答。客層（男女比・年代）・満足度・再来意向の分析と、
+  // クーポンコードでのリピート名寄せに使う。1セッション1件。
+  surveys: defineTable({
+    orgId: v.string(),
+    tableSessionId: v.id('tableSessions'),
+    satisfaction: v.optional(v.number()), // 1〜5
+    gender: v.optional(v.string()), // 'male' | 'female' | 'other'
+    ageGroup: v.optional(v.string()), // '10' | '20' | ... | '60'（代）
+    revisit: v.optional(v.string()), // 'high' | 'mid' | 'low'
+    couponCode: v.optional(v.string()),
+    at: v.number(),
+  })
+    .index('by_orgId', ['orgId'])
+    .index('by_tableSession', ['tableSessionId']),
 });

@@ -6,7 +6,7 @@ import type { Id } from './_generated/dataModel';
 // 開発・デモ用のシード。店舗・卓・メニューを restrant-orders/app のデモと同じ内容で投入する。
 // 本番では使わない（現場ではフロアの設定タブから登録）。
 
-const STORE = { slug: 'sorte', name: 'トラットリア ソルテ' };
+const STORE = { slug: 'gaslab', name: 'トラットリア ガスラボ' };
 
 const TABLES = [
   { label: 'A1', seats: 2, tableToken: 'tok_a1k9f2' },
@@ -139,8 +139,12 @@ export const simulate = mutation({
       | { w: number; kind: 'open'; tableId: Id<'tables'>; seats: number }
       | { w: number; kind: 'serve'; lineId: Id<'orderLines'> }
       | { w: number; kind: 'order'; sessionId: Id<'tableSessions'> }
-      | { w: number; kind: 'settle'; sessionId: Id<'tableSessions'>; bill: number };
+      | { w: number; kind: 'settle'; sessionId: Id<'tableSessions'>; bill: number }
+      | { w: number; kind: 'soldout' };
     const actions: Array<Action> = [];
+
+    // 品切れ（機会損失）をたまに発生させる（分析の「品切れ発生」がライブでも動くように）。
+    if (menu.length) actions.push({ w: 1, kind: 'soldout' });
 
     // F. 清掃完了（清掃中 → 空席＋トークン再生成）
     for (const t of tables) {
@@ -231,6 +235,11 @@ export const simulate = mutation({
       case 'settle':
         await ctx.db.patch(pick.sessionId, { settleStatus: 'succeeded', finalChargeAmount: pick.bill, billTotal: pick.bill });
         return { action: '会計' };
+      case 'soldout': {
+        const it = menu[Math.floor(Math.random() * menu.length)];
+        await ctx.db.insert('soldOutEvents', { orgId, menuItemId: it._id, menuName: it.name, at: Date.now() });
+        return { action: '品切れ', name: it.name };
+      }
     }
   },
 });
@@ -275,6 +284,7 @@ export const seedHistory = mutation({
     let createdSessions = 0;
     let createdLines = 0;
     let createdSoldOuts = 0;
+    let createdSurveys = 0;
     for (let d = 1; d <= days; d++) {
       // 品切れ（機会損失）を 0〜2 件/日 撒く（分析の「品切れ発生」用）。
       const soldOutsToday = rnd(3);
@@ -324,9 +334,22 @@ export const seedHistory = mutation({
         const closedAt = Math.min(lastServed + (20 + rnd(50)) * MIN, now - MIN);
         await ctx.db.patch(sessionId, { settleStatus: 'succeeded', finalChargeAmount: bill, billTotal: bill, closedAt });
         createdSessions++;
+
+        // 会計後アンケート（約6割が回答）。満足度は高め・客層はリアルめに分布。
+        if (Math.random() < 0.6) {
+          const rs = Math.random();
+          const satisfaction = rs < 0.45 ? 5 : rs < 0.78 ? 4 : rs < 0.92 ? 3 : rs < 0.98 ? 2 : 1;
+          const rg = Math.random();
+          const gender = rg < 0.46 ? 'male' : rg < 0.96 ? 'female' : 'other';
+          const ageGroup = ['20', '30', '40', '20', '30', '50', '10', '60'][rnd(8)];
+          const rv = Math.random();
+          const revisit = rv < 0.55 ? 'high' : rv < 0.88 ? 'mid' : 'low';
+          await ctx.db.insert('surveys', { orgId, tableSessionId: sessionId, satisfaction, gender, ageGroup, revisit, at: closedAt });
+          createdSurveys++;
+        }
       }
     }
-    return { ok: true as const, days, createdSessions, createdLines, createdSoldOuts };
+    return { ok: true as const, days, createdSessions, createdLines, createdSoldOuts, createdSurveys };
   },
 });
 
@@ -345,6 +368,20 @@ export const resetDemo = mutation({
         .collect();
       for (const l of lines) await ctx.db.delete(l._id);
       await ctx.db.delete(s._id);
+    }
+    // 品切れ（機会損失）イベントも消す。
+    for (const e of await ctx.db
+      .query('soldOutEvents')
+      .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
+      .collect()) {
+      await ctx.db.delete(e._id);
+    }
+    // アンケート回答も消す。
+    for (const sv of await ctx.db
+      .query('surveys')
+      .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
+      .collect()) {
+      await ctx.db.delete(sv._id);
     }
     // 清掃中フラグも解除（全卓を空席に戻す）
     for (const t of await ctx.db

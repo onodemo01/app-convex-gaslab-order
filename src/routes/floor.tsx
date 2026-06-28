@@ -296,7 +296,7 @@ function StoreSetup() {
       {showForm && (
         <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-4">
           <Field label="店名"><input required value={name} onChange={(e) => setName(e.target.value)} className={`${inputCls} w-48`} /></Field>
-          <Field label="URL名"><input required value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="sorte" className={`${inputCls} w-48 font-mono`} /></Field>
+          <Field label="URL名"><input required value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="gaslab" className={`${inputCls} w-48 font-mono`} /></Field>
           <button type="submit" disabled={busy} className="bg-foreground text-background px-4 py-1.5 text-sm disabled:opacity-50">{busy ? '保存中…' : '保存'}</button>
         </form>
       )}

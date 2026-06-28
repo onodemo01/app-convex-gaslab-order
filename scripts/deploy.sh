@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# sorte-order 本番デプロイ（SPA・プレビルド方式）
+# gaslab-order 本番デプロイ（SPA・プレビルド方式）
 # ------------------------------------------------------------
 # このアプリは TanStack Start の SPA。Vercel には SSR アダプタが無いため、
 #   1) 手元で Convex 本番へデプロイ＋クライアントを本番URLでビルド（npx convex deploy --cmd）
@@ -56,7 +56,7 @@ vercel deploy --prebuilt --prod --yes
 
 echo "▶ [4/4] 公開URLの検証（主要ルートが 200 か）"
 fail=0
-for p in / /floor /kitchen /menu /qr /analytics /demo "/t/sorte/verifytoken"; do
+for p in / /floor /kitchen /menu /qr /analytics /demo "/t/gaslab/verifytoken"; do
   code="$(curl -sS -o /dev/null -w "%{http_code}" "$PUBLIC_URL$p" || echo "000")"
   printf "   %-22s -> %s\n" "$p" "$code"
   [ "$code" = "200" ] || fail=1

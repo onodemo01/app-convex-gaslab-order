@@ -11,21 +11,27 @@ export const Route = createFileRoute('/analytics')({
   component: AnalyticsPage,
 });
 
-type Overview = {
-  sessions: { id: string; label: string; openedAt: number; closedAt: number | null; firstOrderAt: number | null; qty: number; bill: number; settleStatus: string | null }[];
-  groups: number;
-  sales: number;
-  avgServeMs: number | null;
-  avgFirstMs: number | null;
-  servedQty: number;
+type Period = 'day' | 'month' | 'live';
+type Trend = { key: string; label: string; sales: number; groups: number; guests: number; dishes: number; avgStayMs: number | null; avgServeMs: number | null; soldOuts: number };
+type Report = {
+  period: Period;
+  kpis: { sales: number; groups: number; guests: number; perGuest: number; avgStayMs: number | null; avgServeMs: number | null; avgFirstMs: number | null; soldOuts: number };
+  trend: Trend[];
+  hourly: { hour: number; orderedCount: number; asapServedCount: number; avgAsapMs: number | null }[];
+  dishes: { menuName: string; code: number | null; serveAsap: boolean; orderedCount: number; servedCount: number; pendingCount: number; avgMs: number | null; maxMs: number | null }[];
+  sessions: { id: string; label: string; openedAt: number; closedAt: number | null; firstOrderAt: number | null; qty: number; settleStatus: string | null }[];
+  survey: { responses: number; avgSatisfaction: number | null; gender: { male: number; female: number; other: number }; age: Record<string, number>; revisit: { high: number; mid: number; low: number } };
 };
-type MenuStat = { menuName: string; code: number | null; serveAsap: boolean; orderedCount: number; servedCount: number; pendingCount: number; avgMs: number | null; maxMs: number | null };
-type Hourly = { hour: number; orderedCount: number; asapServedCount: number; avgAsapMs: number | null };
+
+const PERIOD_TABS: [Period, string][] = [
+  ['day', '日別'],
+  ['month', '月別'],
+  ['live', 'ライブ（当日）'],
+];
 
 function AnalyticsPage() {
-  const { data: ov } = useQuery(convexQuery(api.analytics.overview, {}));
-  const { data: dishesData } = useQuery(convexQuery(api.analytics.menuServeStats, {}));
-  const { data: hourlyData } = useQuery(convexQuery(api.analytics.hourlyServeLoad, {}));
+  const [period, setPeriod] = useState<Period>('day');
+  const { data } = useQuery(convexQuery(api.analytics.report, { period }));
   const seedHistory = useMutation(api.dev.seedHistory);
   const [seeding, setSeeding] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -34,36 +40,41 @@ function AnalyticsPage() {
     return () => clearInterval(id);
   }, []);
 
-  const o = ov as Overview | undefined;
-  const dishes = (dishesData ?? []) as MenuStat[];
-  const hourly = (hourlyData ?? []) as Hourly[];
+  const r = data as Report | undefined;
+  const k = r?.kpis;
+  const trend = r?.trend ?? [];
+  const hourly = r?.hourly ?? [];
+  const dishes = r?.dishes ?? [];
+  const sessions = r?.sessions ?? [];
 
-  const sessions = o?.sessions ?? [];
-  const groups = o?.groups ?? 0;
-  const sales = o?.sales ?? 0;
-  const perGroup = groups > 0 ? sales / groups : 0;
-  const stays = sessions.map((s) => (s.closedAt ?? now) - s.openedAt);
-  const avgStay = stays.length ? Math.round(stays.reduce((a, b) => a + b, 0) / stays.length) : null;
-  const fmt = (ms: number | null) => (ms == null ? '—' : dur(ms));
-
-  const kpis = [
-    { lbl: '売上合計', val: yen(sales), sub: '全セッション・税込' },
-    { lbl: '組数', val: String(groups), sub: '来店組数' },
-    { lbl: '客単価', val: groups ? yen(perGroup) : '—', sub: '売上 ÷ 組数' },
-    { lbl: '平均 滞在', val: fmt(avgStay), sub: '着席 → 退店' },
-    { lbl: '平均 着席→初回注文', val: fmt(o?.avgFirstMs ?? null), sub: '席についてから最初の注文' },
-    { lbl: '平均 提供所要', val: fmt(o?.avgServeMs ?? null), sub: '注文 → 提供（料理ごと）' },
-  ];
-
+  const periodTitle = period === 'month' ? '直近6ヶ月' : period === 'day' ? '直近14日' : '本日';
+  const fmt = (ms: number | null | undefined) => (ms == null ? '—' : dur(ms));
   const maxHour = Math.max(1, ...hourly.map((h) => h.orderedCount));
-  const empty = sessions.length === 0;
+  const maxTrend = Math.max(1, ...trend.map((t) => t.sales));
+  const empty = (k?.groups ?? 0) === 0;
+  const isLive = period === 'live';
 
   return (
     <main style={css('height:100vh; display:flex; flex-direction:column; background:#f4f5f7;')}>
       <div style={css('flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 16px; height:48px; background:#fff; border-bottom:1px solid #cbd5e1;')}>
-        <div style={css('display:flex; align-items:center; gap:12px;')}>
+        <div style={css('display:flex; align-items:center; gap:14px;')}>
           <Link to="/" style={css('font-size:12px; color:#94a3b8; text-decoration:none;')}>← 入口</Link>
           <span style={css('font-size:15px; font-weight:700; color:#171717;')}>分析</span>
+          {/* 期間タブ */}
+          <div style={css('display:flex; gap:0; border:1px solid #cbd5e1; border-radius:3px; overflow:hidden;')}>
+            {PERIOD_TABS.map(([key, label]) => {
+              const on = period === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setPeriod(key)}
+                  style={css(`height:28px; padding:0 12px; border:none; font-size:12px; font-weight:${on ? 700 : 500}; background:${on ? '#171717' : '#fff'}; color:${on ? '#fff' : '#475569'}; cursor:pointer;`)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <span style={css('font-size:11px; color:#94a3b8;')}>タイムスタンプから算出（実データ）</span>
         </div>
         <button
@@ -88,20 +99,95 @@ function AnalyticsPage() {
 
           {empty && (
             <div style={css('padding:24px; text-align:center; font-size:13px; color:#94a3b8; border:1px dashed #cbd5e1; border-radius:2px; background:#fff;')}>
-              まだ集計できるデータがありません。注文や会計が発生すると、ここに提供スピードや滞在時間が出ます。
+              {isLive ? '本日のデータがまだありません。注文や会計が発生すると、ここに出ます。' : 'この期間のデータがありません。右上の「サンプル過去データ投入」で履歴を入れられます。'}
             </div>
           )}
 
           {/* KPI */}
           <div style={css('display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px;')}>
-            {kpis.map((c, i) => (
-              <div key={i} style={css('border:1px solid #cbd5e1; border-radius:2px; padding:13px 15px; background:#fff;')}>
-                <div style={css('font-size:11px; color:#64748b;')}>{c.lbl}</div>
-                <div className="tnum" style={css('font-size:24px; font-weight:700; color:#171717; line-height:1.25;')}>{c.val}</div>
-                <div style={css('font-size:10px; color:#94a3b8;')}>{c.sub}</div>
-              </div>
-            ))}
+            <Kpi lbl="売上合計" sub={`${periodTitle}・税込`} val={yen(k?.sales ?? 0)} />
+            <div style={css('border:1px solid #cbd5e1; border-radius:2px; padding:13px 15px; background:#fff;')}>
+              <div style={css('font-size:11px; color:#64748b;')}>組数 / 客数</div>
+              <div className="tnum" style={css('font-size:24px; font-weight:700; color:#171717; line-height:1.25;')}>{(k?.groups ?? 0).toLocaleString('ja-JP')}<span style={css('font-size:14px; color:#94a3b8;')}> / {(k?.guests ?? 0).toLocaleString('ja-JP')}</span></div>
+              <div style={css('font-size:10px; color:#94a3b8;')}>来店組数・人数</div>
+            </div>
+            <Kpi lbl="客単価" sub="売上 ÷ 客数" val={k && k.guests ? yen(k.perGuest) : '—'} />
+            <Kpi lbl="平均 滞在" sub="着席 → 退店" val={fmt(k?.avgStayMs)} />
+            <Kpi lbl="平均 提供所要" sub="注文 → 提供（料理ごと）" val={fmt(k?.avgServeMs)} />
+            <div style={css('border:1px solid #cbd5e1; border-radius:2px; padding:13px 15px; background:#fff;')}>
+              <div style={css('font-size:11px; color:#64748b;')}>品切れ発生</div>
+              <div className="tnum" style={css('font-size:24px; font-weight:700; color:#b45309; line-height:1.25;')}>{k?.soldOuts ?? 0}</div>
+              <div style={css('font-size:10px; color:#94a3b8;')}>機会損失の目安</div>
+            </div>
           </div>
+
+          {/* 客層・満足度（アンケート） */}
+          {r?.survey && (
+            <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
+              <div style={css('padding:10px 14px; background:#fafbfc; border-bottom:1px solid #e2e8f0; font-size:12px; font-weight:700; color:#475569;')}>客層・満足度（会計後アンケート・{r.survey.responses} 件）</div>
+              {r.survey.responses === 0 ? (
+                <div style={css('padding:16px 14px; font-size:12px; color:#94a3b8;')}>この期間の回答がまだありません。客スマホの会計後アンケートから集まります。</div>
+              ) : (
+                <div style={css('display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:18px; padding:16px 16px;')}>
+                  {/* 満足度 */}
+                  <div style={css('display:flex; flex-direction:column; gap:6px;')}>
+                    <div style={css('font-size:11px; color:#94a3b8;')}>平均満足度</div>
+                    <div style={css('display:flex; align-items:center; gap:8px;')}>
+                      <span style={css('font-size:15px; letter-spacing:1px;')}>
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <span key={n} style={css(`color:${r.survey.avgSatisfaction != null && n <= Math.round(r.survey.avgSatisfaction) ? '#f59e0b' : '#e2e8f0'};`)}>★</span>
+                        ))}
+                      </span>
+                      <span className="tnum" style={css('font-size:20px; font-weight:700; color:#171717;')}>{r.survey.avgSatisfaction ?? '—'}</span>
+                    </div>
+                  </div>
+                  {/* 男女比 */}
+                  <SurveyBars title="男女比" rows={[['男性', r.survey.gender.male, '#3b82f6'], ['女性', r.survey.gender.female, '#ec4899'], ['その他', r.survey.gender.other, '#94a3b8']]} />
+                  {/* 年代 */}
+                  <SurveyBars title="年代" rows={(['10', '20', '30', '40', '50', '60'] as const).map((a) => [a === '60' ? '60〜' : a + '代', r.survey.age[a] ?? 0, '#334155'])} />
+                  {/* 再来意向 */}
+                  <SurveyBars title="また来たい？" rows={[['ぜひ', r.survey.revisit.high, '#15803d'], ['たぶん', r.survey.revisit.mid, '#b45309'], ['うーん', r.survey.revisit.low, '#94a3b8']]} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 売上推移（日別・月別のみ） */}
+          {!isLive && (
+            <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
+              <div style={css('padding:10px 14px; background:#fafbfc; border-bottom:1px solid #e2e8f0; font-size:12px; font-weight:700; color:#475569;')}>売上推移（{periodTitle}）</div>
+              {trend.length === 0 ? (
+                <div style={css('padding:18px 14px; font-size:12px; color:#94a3b8;')}>データなし</div>
+              ) : (
+                <>
+                  <div style={css('display:flex; align-items:flex-end; gap:6px; height:150px; padding:16px 14px 10px;')}>
+                    {trend.map((t, i) => (
+                      <div key={t.key} style={css('flex:1; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:4px;')}>
+                        <span className="tnum" style={css('font-size:9px; color:#94a3b8;')}>¥{Math.round(t.sales / 1000)}k</span>
+                        <div style={css(`width:100%; max-width:34px; height:${Math.max(4, Math.round((t.sales / maxTrend) * 100))}%; min-height:4px; background:${i === trend.length - 1 ? '#1d4ed8' : '#334155'}; border-radius:2px 2px 0 0;`)} />
+                        <span className="tnum" style={css('font-size:9px; color:#94a3b8; white-space:nowrap;')}>{t.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* 推移テーブル（新しい順） */}
+                  <div style={css('display:grid; grid-template-columns:74px 1fr 64px 84px 78px 78px 56px; gap:0; padding:8px 14px; border-top:1px solid #eef1f4; border-bottom:1px solid #eef1f4; font-size:10px; font-weight:700; color:#94a3b8;')}>
+                    <span>期間</span><span /><span style={css('text-align:right;')}>売上</span><span style={css('text-align:right;')}>組数</span><span style={css('text-align:right;')}>客単価</span><span style={css('text-align:right;')}>平均提供</span><span style={css('text-align:right;')}>品切れ</span>
+                  </div>
+                  {trend.slice().reverse().map((t, i) => (
+                    <div key={t.key} style={css(`display:grid; grid-template-columns:74px 1fr 64px 84px 78px 78px 56px; gap:0; padding:9px 14px; border-bottom:1px solid #f1f5f9; align-items:center; background:${i === 0 ? '#fafcff' : '#fff'};`)}>
+                      <span style={css('font-size:12px; font-weight:700; color:#171717;')}>{t.label}</span>
+                      <span />
+                      <span className="tnum" style={css('text-align:right; font-size:13px; color:#171717;')}>{yen(t.sales)}</span>
+                      <span className="tnum" style={css('text-align:right; font-size:13px; color:#475569;')}>{t.groups}</span>
+                      <span className="tnum" style={css('text-align:right; font-size:13px; color:#475569;')}>{t.guests ? yen(Math.round(t.sales / t.guests)) : '—'}</span>
+                      <span className="tnum" style={css('text-align:right; font-size:13px; color:#475569;')}>{fmt(t.avgServeMs)}</span>
+                      <span className="tnum" style={css(`text-align:right; font-size:13px; color:${t.soldOuts > 0 ? '#b45309' : '#cbd5e1'};`)}>{t.soldOuts}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
 
           {/* 時間帯別 負荷とスピード */}
           <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
@@ -150,33 +236,68 @@ function AnalyticsPage() {
             )}
           </div>
 
-          {/* セッション別ログ */}
-          <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
-            <div style={css('padding:10px 14px; background:#fafbfc; border-bottom:1px solid #e2e8f0; font-size:12px; font-weight:700; color:#475569;')}>セッション別ログ（卓ごと）</div>
-            <div style={css('display:grid; grid-template-columns:48px 70px 1fr 1fr 56px 72px; gap:0; padding:8px 14px; border-bottom:1px solid #eef1f4; font-size:10px; font-weight:700; color:#94a3b8;')}>
-              <span>卓</span><span>着席</span><span style={css('text-align:right;')}>滞在</span><span style={css('text-align:right;')}>着席→初回注文</span><span style={css('text-align:right;')}>品数</span><span style={css('text-align:right;')}>状態</span>
+          {/* セッション別ログ（ライブのみ） */}
+          {isLive && (
+            <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
+              <div style={css('padding:10px 14px; background:#fafbfc; border-bottom:1px solid #e2e8f0; font-size:12px; font-weight:700; color:#475569;')}>セッション別ログ（本日・卓ごと）</div>
+              <div style={css('display:grid; grid-template-columns:48px 70px 1fr 1fr 56px 72px; gap:0; padding:8px 14px; border-bottom:1px solid #eef1f4; font-size:10px; font-weight:700; color:#94a3b8;')}>
+                <span>卓</span><span>着席</span><span style={css('text-align:right;')}>滞在</span><span style={css('text-align:right;')}>着席→初回注文</span><span style={css('text-align:right;')}>品数</span><span style={css('text-align:right;')}>状態</span>
+              </div>
+              {sessions.length === 0 ? (
+                <div style={css('padding:16px 14px; font-size:12px; color:#94a3b8;')}>データなし</div>
+              ) : (
+                sessions.map((se) => {
+                  const closed = se.closedAt !== null;
+                  return (
+                    <div key={se.id} style={css('display:grid; grid-template-columns:48px 70px 1fr 1fr 56px 72px; gap:0; padding:9px 14px; border-bottom:1px solid #f1f5f9; align-items:center;')}>
+                      <span style={css('font-size:14px; font-weight:700; color:#171717;')}>{se.label}</span>
+                      <span className="tnum" style={css('font-size:12px; color:#475569;')}>{clock(se.openedAt)}</span>
+                      <span className="tnum" style={css('text-align:right; font-size:13px; color:#171717;')}>{dur((se.closedAt ?? now) - se.openedAt)}</span>
+                      <span className="tnum" style={css('text-align:right; font-size:13px; color:#171717;')}>{se.firstOrderAt != null ? dur(se.firstOrderAt - se.openedAt) : '—'}</span>
+                      <span className="tnum" style={css('text-align:right; font-size:13px; color:#475569;')}>{se.qty}</span>
+                      <span style={css('text-align:right;')}><span style={css(`font-size:10px; font-weight:700; padding:1px 7px; border-radius:2px; color:${closed ? '#64748b' : '#15803d'}; background:${closed ? '#eceff3' : '#e7f5ec'};`)}>{closed ? '退店済み' : '在店中'}</span></span>
+                    </div>
+                  );
+                })
+              )}
             </div>
-            {sessions.length === 0 ? (
-              <div style={css('padding:16px 14px; font-size:12px; color:#94a3b8;')}>データなし</div>
-            ) : (
-              sessions.map((se) => {
-                const closed = se.closedAt !== null;
-                return (
-                  <div key={se.id} style={css('display:grid; grid-template-columns:48px 70px 1fr 1fr 56px 72px; gap:0; padding:9px 14px; border-bottom:1px solid #f1f5f9; align-items:center;')}>
-                    <span style={css('font-size:14px; font-weight:700; color:#171717;')}>{se.label}</span>
-                    <span className="tnum" style={css('font-size:12px; color:#475569;')}>{clock(se.openedAt)}</span>
-                    <span className="tnum" style={css('text-align:right; font-size:13px; color:#171717;')}>{dur((se.closedAt ?? now) - se.openedAt)}</span>
-                    <span className="tnum" style={css('text-align:right; font-size:13px; color:#171717;')}>{se.firstOrderAt != null ? dur(se.firstOrderAt - se.openedAt) : '—'}</span>
-                    <span className="tnum" style={css('text-align:right; font-size:13px; color:#475569;')}>{se.qty}</span>
-                    <span style={css('text-align:right;')}><span style={css(`font-size:10px; font-weight:700; padding:1px 7px; border-radius:2px; color:${closed ? '#64748b' : '#15803d'}; background:${closed ? '#eceff3' : '#e7f5ec'};`)}>{closed ? '退店済み' : '在店中'}</span></span>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          )}
 
         </div>
       </div>
     </main>
+  );
+}
+
+function SurveyBars({ title, rows }: { title: string; rows: [string, number, string][] }) {
+  const total = rows.reduce((a, r) => a + r[1], 0);
+  return (
+    <div style={css('display:flex; flex-direction:column; gap:6px;')}>
+      <div style={css('font-size:11px; color:#94a3b8;')}>{title}</div>
+      <div style={css('display:flex; flex-direction:column; gap:5px;')}>
+        {rows.map(([label, n, color]) => {
+          const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+          return (
+            <div key={label} style={css('display:grid; grid-template-columns:46px 1fr 56px; align-items:center; gap:8px;')}>
+              <span style={css('font-size:11px; color:#475569;')}>{label}</span>
+              <span style={css('display:block; height:8px; background:#f1f5f9; border-radius:4px; overflow:hidden;')}>
+                <span style={css(`display:block; height:100%; width:${pct}%; background:${color}; border-radius:4px;`)} />
+              </span>
+              <span className="tnum" style={css('font-size:11px; color:#94a3b8; text-align:right;')}>{n}（{pct}%）</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Kpi({ lbl, val, sub }: { lbl: string; val: string; sub: string }) {
+  return (
+    <div style={css('border:1px solid #cbd5e1; border-radius:2px; padding:13px 15px; background:#fff;')}>
+      <div style={css('font-size:11px; color:#64748b;')}>{lbl}</div>
+      <div className="tnum" style={css('font-size:24px; font-weight:700; color:#171717; line-height:1.25;')}>{val}</div>
+      <div style={css('font-size:10px; color:#94a3b8;')}>{sub}</div>
+    </div>
   );
 }

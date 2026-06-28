@@ -41,7 +41,7 @@
 ## 用意するもの
 
 - パソコン（Mac または Windows）とインターネット
-- **このプロジェクトのフォルダ**（`sorte-order`）
+- **このプロジェクトのフォルダ**（`gaslab-order`）
 - **Node.js**（バージョン18以上）… ターミナルで `node -v` と打って `v18` 以上ならOK
   - 入っていなければ <https://nodejs.org/> の「LTS」をインストール
 - 無料アカウント3つ（この手順の中で作ります）
@@ -52,7 +52,7 @@
 > 🖥 「ターミナル」の開き方
 > - Mac: アプリ「ターミナル」
 > - Windows: 「PowerShell」
-> どちらも、フォルダ `sorte-order` の中で開いてください（VS Code を使っている人は「ターミナル」メニューから）。
+> どちらも、フォルダ `gaslab-order` の中で開いてください（VS Code を使っている人は「ターミナル」メニューから）。
 
 ---
 
@@ -95,7 +95,7 @@ npx convex login
 ### 1-2. クラウドにプロジェクトを作る
 
 ```bash
-npx convex dev --configure new --team <あなたのチーム名> --project sorte-order
+npx convex dev --configure new --team <あなたのチーム名> --project gaslab-order
 ```
 
 - **チーム名** は自分のアカウント名（例 `ono`）。1人なら自動で1つだけあるはず。
@@ -121,7 +121,7 @@ npx convex deploy
 
 ### 1-3. Convex ダッシュボードを開いておく
 
-ブラウザで <https://dashboard.convex.dev> を開き、いま作った `sorte-order` プロジェクトを開きます。
+ブラウザで <https://dashboard.convex.dev> を開き、いま作った `gaslab-order` プロジェクトを開きます。
 あとで環境変数（Stripeキー）を入れるのでこのタブは開いたままに。
 
 > 📸 **[1-3] Convex ダッシュボード**
@@ -182,7 +182,7 @@ npx convex deploy
 **方法B：コマンド（`--prod` を必ず付ける）**
 
 ```bash
-# すでに sorte-order フォルダの中にいるなら cd は不要
+# すでに gaslab-order フォルダの中にいるなら cd は不要
 npx convex env set STRIPE_SECRET_KEY sk_test_... --prod
 ```
 
@@ -221,7 +221,7 @@ vercel link
 ```
 
 - 「Set up and deploy?」→ **Yes / Link to existing? No / 新規作成**
-- プロジェクト名は `sorte-order` などでOK（質問はだいたい Enter で進めて大丈夫）
+- プロジェクト名は `gaslab-order` などでOK（質問はだいたい Enter で進めて大丈夫）
 
 > 📸 **[3-2] vercel link 完了**
 > `Linked to ...` と表示されたターミナルを撮影。
@@ -286,7 +286,7 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 ### 4-1. デモデータを入れる
 
 公開URL（入口画面）の下のほうにある **「デモデータ投入」** ボタンを押します。
-店舗「トラットリア ソルテ」と卓・メニューが入ります。
+店舗「トラットリア ガスラボ」と卓・メニューが入ります。
 
 > 📸 **[4-1] 入口画面（公開後）**
 > 公開URLの入口画面を撮影。
@@ -332,7 +332,7 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 | 症状 | 原因・対処 |
 |---|---|
 | `node -v` でエラー | Node.js が未インストール。<https://nodejs.org/> の LTS を入れる |
-| `npm install` で赤いエラー | フォルダを間違えている可能性。`sorte-order` フォルダの中で実行しているか確認 |
+| `npm install` で赤いエラー | フォルダを間違えている可能性。`gaslab-order` フォルダの中で実行しているか確認 |
 | 入口は出るが「店舗未設定」 | 「デモデータ投入」を押す／Convex のデプロイが終わっているか確認 |
 | 会計ボタンで「会計の開始に失敗」 | Convex の `STRIPE_SECRET_KEY` が未設定・打ち間違い。ステップ2-3を見直す |
 | 決済後に「会計済み」にならない | 正常。完全自動化には**付録A（Webhook）**が必要 |
