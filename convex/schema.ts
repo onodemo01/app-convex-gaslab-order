@@ -85,6 +85,22 @@ export default defineSchema({
     at: v.number(),
   }).index('by_orgId', ['orgId']),
 
+  // 次回クーポン。会計完了で1件「発行」し、次回来店時にコード入力で「利用」を記録する。
+  // ログインなしキオスクのため、コード＝同一客の橋渡し（利用したセッション＝再来客）。
+  // 発行/利用の事実だけを残し、利用率・リピート率は都度導出（イベントソーシング）。
+  coupons: defineTable({
+    orgId: v.string(),
+    code: v.string(), // 表示コード GASLAB-XXXX（大文字）。発行元セッションIDから導出。
+    issuedSessionId: v.id('tableSessions'), // 発行元（このセッションの会計完了で配布）
+    issuedAt: v.number(),
+    expiresAt: v.optional(v.number()), // 未設定の旧データは issuedAt + 90日 として扱う
+    redeemedSessionId: v.optional(v.id('tableSessions')), // 利用したセッション（＝再来・1回限り）
+    redeemedAt: v.optional(v.number()),
+  })
+    .index('by_orgId', ['orgId'])
+    .index('by_orgId_code', ['orgId', 'code'])
+    .index('by_issuedSession', ['issuedSessionId']),
+
   // 会計後アンケート。任意回答。客層（男女比・年代）・満足度・再来意向の分析と、
   // クーポンコードでのリピート名寄せに使う。1セッション1件。
   surveys: defineTable({
@@ -94,6 +110,7 @@ export default defineSchema({
     gender: v.optional(v.string()), // 'male' | 'female' | 'other'
     ageGroup: v.optional(v.string()), // '10' | '20' | ... | '60'（代）
     revisit: v.optional(v.string()), // 'high' | 'mid' | 'low'
+    comment: v.optional(v.string()), // 自由記述（任意）。AI ネガポジ分析・要約の入力。
     couponCode: v.optional(v.string()),
     at: v.number(),
   })

@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { mutation } from './_generated/server';
 import { requireOrgId } from './auth';
 import type { Id } from './_generated/dataModel';
+import { issueCoupon, couponCodeFor, COUPON_VALID_DAYS } from './coupons';
 
 // 開発・デモ用のシード。店舗・卓・メニューを restrant-orders/app のデモと同じ内容で投入する。
 // 本番では使わない（現場ではフロアの設定タブから登録）。
@@ -49,6 +50,29 @@ const MENU: Array<{
   { code: 5004, name: 'イタリアンプリン', category: 'ドリンク・デザート', price: 250, stock: 18 },
 ];
 
+// seedHistory 用のサンプル自由記述（満足度の傾向に合わせて出し分ける）。AI ネガポジ分析のデモ入力。
+const COMMENTS_POS = [
+  'パスタがもちもちで美味しかったです。また来ます！',
+  '店員さんの対応が丁寧で気持ちよく過ごせました。',
+  'ピザが熱々で最高でした。子連れでも安心できる雰囲気。',
+  'コスパが良くて満足。ドリンクバーも種類豊富。',
+  'タッチパネルの注文が簡単で待ち時間も短かった。',
+  '記念日に利用しました。デザートまで大満足です。',
+];
+const COMMENTS_NEG = [
+  '料理が出てくるのが少し遅かったです。',
+  '注文した品が品切れで残念でした。',
+  '店内が少し騒がしくて落ち着かなかった。',
+  '会計に時間がかかった。もう少しスムーズだと良い。',
+  'パスタが少し冷めていました。',
+];
+const COMMENTS_NEU = [
+  '普通に美味しかったです。',
+  '可もなく不可もなくという感じ。',
+  '席の案内まで少し待ちました。',
+  'メニューの種類はちょうど良いと思います。',
+];
+
 // 空なら一式投入する冪等シード。
 export const seedDemo = mutation({
   args: {},
@@ -62,6 +86,10 @@ export const seedDemo = mutation({
     if (!store) {
       const id = await ctx.db.insert('stores', { orgId, slug: STORE.slug, name: STORE.name });
       store = await ctx.db.get(id);
+    } else if (store.slug !== STORE.slug || store.name !== STORE.name) {
+      // 旧デモ名（sorte 等）が残っていても、再投入で gaslab に揃える。
+      await ctx.db.patch(store._id, { slug: STORE.slug, name: STORE.name });
+      store = { ...store, slug: STORE.slug, name: STORE.name };
     }
 
     const tables = await ctx.db
@@ -202,12 +230,23 @@ export const simulate = mutation({
         await ctx.db.patch(pick.tableId, { cleaning: true });
         return { action: '退店' };
       case 'open': {
-        await ctx.db.insert('tableSessions', {
+        const newId = await ctx.db.insert('tableSessions', {
           orgId,
           tableId: pick.tableId,
           openedAt: Date.now(),
           partySize: pick.seats >= 4 ? 2 + Math.floor(Math.random() * 3) : 2,
         });
+        // たまに既存の未利用クーポンを利用（再来客の演出・リピート率がライブでも動く）。
+        if (Math.random() < 0.35) {
+          const coupon = await ctx.db
+            .query('coupons')
+            .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
+            .filter((q) => q.eq(q.field('redeemedSessionId'), undefined))
+            .first();
+          if (coupon && coupon.issuedSessionId !== newId) {
+            await ctx.db.patch(coupon._id, { redeemedSessionId: newId, redeemedAt: Date.now() });
+          }
+        }
         return { action: '着席' };
       }
       case 'serve':
@@ -234,6 +273,8 @@ export const simulate = mutation({
       }
       case 'settle':
         await ctx.db.patch(pick.sessionId, { settleStatus: 'succeeded', finalChargeAmount: pick.bill, billTotal: pick.bill });
+        // 次回クーポンを発行（会計完了の事実）。
+        await issueCoupon(ctx, orgId, pick.sessionId);
         return { action: '会計' };
       case 'soldout': {
         const it = menu[Math.floor(Math.random() * menu.length)];
@@ -285,7 +326,12 @@ export const seedHistory = mutation({
     let createdLines = 0;
     let createdSoldOuts = 0;
     let createdSurveys = 0;
-    for (let d = 1; d <= days; d++) {
+    let createdCoupons = 0;
+    let redeemedCoupons = 0;
+    // 発行済みで未利用のクーポン置き場（古い日から処理するので、後の来店が過去のコードを利用＝再来）。
+    const couponPool: Array<{ id: Id<'coupons'>; issuedSessionId: Id<'tableSessions'> }> = [];
+    // 古い日 → 新しい日の順で生成する（リピート＝過去に発行したコードの利用、を成立させるため）。
+    for (let d = days; d >= 1; d--) {
       // 品切れ（機会損失）を 0〜2 件/日 撒く（分析の「品切れ発生」用）。
       const soldOutsToday = rnd(3);
       for (let k = 0; k < soldOutsToday; k++) {
@@ -335,6 +381,27 @@ export const seedHistory = mutation({
         await ctx.db.patch(sessionId, { settleStatus: 'succeeded', finalChargeAmount: bill, billTotal: bill, closedAt });
         createdSessions++;
 
+        // 来店時にクーポン利用（再来客）：約3割が過去発行の未利用コードを使う。openedAt に利用記録。
+        if (couponPool.length > 0 && Math.random() < 0.3) {
+          const idx = rnd(couponPool.length);
+          const used = couponPool[idx];
+          if (used.issuedSessionId !== sessionId) {
+            await ctx.db.patch(used.id, { redeemedSessionId: sessionId, redeemedAt: openedAt });
+            couponPool.splice(idx, 1);
+            redeemedCoupons++;
+          }
+        }
+        // この会計で次回クーポンを発行（issuedAt=会計時刻）。プールに積む。
+        const couponId: Id<'coupons'> = await ctx.db.insert('coupons', {
+          orgId,
+          code: couponCodeFor(sessionId),
+          issuedSessionId: sessionId,
+          issuedAt: closedAt,
+          expiresAt: closedAt + COUPON_VALID_DAYS * 24 * 60 * 60 * 1000,
+        });
+        couponPool.push({ id: couponId, issuedSessionId: sessionId });
+        createdCoupons++;
+
         // 会計後アンケート（約6割が回答）。満足度は高め・客層はリアルめに分布。
         if (Math.random() < 0.6) {
           const rs = Math.random();
@@ -344,12 +411,18 @@ export const seedHistory = mutation({
           const ageGroup = ['20', '30', '40', '20', '30', '50', '10', '60'][rnd(8)];
           const rv = Math.random();
           const revisit = rv < 0.55 ? 'high' : rv < 0.88 ? 'mid' : 'low';
-          await ctx.db.insert('surveys', { orgId, tableSessionId: sessionId, satisfaction, gender, ageGroup, revisit, at: closedAt });
+          // 約45%に自由記述を付ける。満足度に応じてポジ/中立/ネガを出し分け。
+          let comment: string | undefined;
+          if (Math.random() < 0.45) {
+            const pool = satisfaction >= 4 ? COMMENTS_POS : satisfaction <= 2 ? COMMENTS_NEG : COMMENTS_NEU;
+            comment = pool[rnd(pool.length)];
+          }
+          await ctx.db.insert('surveys', { orgId, tableSessionId: sessionId, satisfaction, gender, ageGroup, revisit, comment, at: closedAt });
           createdSurveys++;
         }
       }
     }
-    return { ok: true as const, days, createdSessions, createdLines, createdSoldOuts, createdSurveys };
+    return { ok: true as const, days, createdSessions, createdLines, createdSoldOuts, createdSurveys, createdCoupons, redeemedCoupons };
   },
 });
 
@@ -383,12 +456,22 @@ export const resetDemo = mutation({
       .collect()) {
       await ctx.db.delete(sv._id);
     }
+    // クーポン（発行/利用）も消す。
+    for (const cp of await ctx.db
+      .query('coupons')
+      .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
+      .collect()) {
+      await ctx.db.delete(cp._id);
+    }
     // 清掃中フラグも解除（全卓を空席に戻す）
     for (const t of await ctx.db
       .query('tables')
       .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
       .collect()) {
-      if (t.cleaning) await ctx.db.patch(t._id, { cleaning: undefined });
+      const patch: { cleaning?: undefined; claimToken?: undefined } = {};
+      if (t.cleaning) patch.cleaning = undefined;
+      if (t.claimToken) patch.claimToken = undefined;
+      if (Object.keys(patch).length > 0) await ctx.db.patch(t._id, patch);
     }
     // 在庫を初期値へ戻す
     const byCode = new Map(MENU.map((m) => [m.code, m]));

@@ -10,6 +10,7 @@ import {
 import { requireOrgId } from './auth';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
+import { issueCoupon, findRedeemedForSession, findIssuedForSession, couponDiscountAmount, couponExpiresAt, COUPON_DISCOUNT_PERCENT } from './coupons';
 
 export async function computeBillTotalFromOrders(
   ctx: QueryCtx | MutationCtx,
@@ -150,11 +151,51 @@ export const guestSession = query({
       .query('stores')
       .withIndex('by_orgId', (q) => q.eq('orgId', session.orgId))
       .first();
-    const billPreview =
-      session.billTotal ?? (session.closedAt === undefined ? await computeBillTotalFromOrders(ctx, session._id) : null);
+    const orderSubtotal =
+      session.closedAt === undefined
+        ? await computeBillTotalFromOrders(ctx, session._id)
+        : session.billTotal ?? null;
+
+    const redeemed =
+      session.closedAt === undefined ? await findRedeemedForSession(ctx, session.orgId, session._id) : null;
+
+    const survey = await ctx.db
+      .query('surveys')
+      .withIndex('by_tableSession', (q) => q.eq('tableSessionId', session._id))
+      .first();
+    const issued = await findIssuedForSession(ctx, session._id);
+
+    let billSubtotal = orderSubtotal;
+    let billPayable = orderSubtotal;
+    let appliedCoupon: { code: string; discountPercent: number; discountAmount: number } | null = null;
+
+    if (redeemed && orderSubtotal != null) {
+      const discountAmount = couponDiscountAmount(orderSubtotal);
+      billPayable = Math.max(0, orderSubtotal - discountAmount);
+      appliedCoupon = { code: redeemed.code, discountPercent: COUPON_DISCOUNT_PERCENT, discountAmount };
+    }
+
+    // 会計ロック中は beginTableSettle が確定した割引後金額を billTotal に保持。
+    if (session.settleStatus === 'charging' && session.billTotal !== undefined) {
+      billPayable = session.billTotal;
+      if (redeemed && orderSubtotal != null) {
+        appliedCoupon = {
+          code: redeemed.code,
+          discountPercent: COUPON_DISCOUNT_PERCENT,
+          discountAmount: Math.max(0, orderSubtotal - session.billTotal),
+        };
+      }
+    }
+
     return {
       ...sessionSummary(session, table, store?.name ?? ''),
-      billPreview,
+      billPreview: billPayable,
+      billSubtotal,
+      billPayable,
+      appliedCoupon,
+      surveyResponded: survey != null,
+      issuedCouponCode: issued?.code ?? null,
+      issuedCouponExpiresAt: issued ? couponExpiresAt(issued) : null,
       canOrder: session.closedAt === undefined && session.settleStatus !== 'charging' && session.settleStatus !== 'succeeded',
       canPay:
         session.closedAt === undefined &&
@@ -283,6 +324,20 @@ export const closeSession = mutation({
     if (session.closedAt !== undefined) throw new ConvexError('既に閉じています');
     if (session.settleStatus === 'charging') throw new ConvexError('会計処理中です');
 
+    // 現金・レジ会計で直接閉じる場合: 会計済み＋クーポン発行（Stripe を介さない退店）。
+    if (session.settleStatus !== 'succeeded') {
+      const subtotal = session.billTotal ?? (await computeBillTotalFromOrders(ctx, session._id));
+      const redeemed = await findRedeemedForSession(ctx, session.orgId, session._id);
+      const discountAmount = redeemed ? couponDiscountAmount(subtotal) : 0;
+      const payable = Math.max(0, subtotal - discountAmount);
+      await ctx.db.patch(args.sessionId, {
+        settleStatus: 'succeeded',
+        billTotal: payable,
+        finalChargeAmount: payable,
+      });
+      await issueCoupon(ctx, session.orgId, args.sessionId);
+    }
+
     await ctx.db.patch(args.sessionId, { closedAt: Date.now() });
     await ctx.db.patch(session.tableId, { cleaning: true });
   },
@@ -335,8 +390,11 @@ export const beginTableSettle = internalMutation({
       billTotal = session.billTotal;
     } else {
       if (session.settleStatus === 'charging') throw new ConvexError('会計処理中です。しばらくお待ちください');
-      billTotal = await computeBillTotalFromOrders(ctx, session._id);
-      if (billTotal <= 0) throw new ConvexError('注文がありません');
+      const subtotal = await computeBillTotalFromOrders(ctx, session._id);
+      if (subtotal <= 0) throw new ConvexError('注文がありません');
+      const redeemed = await findRedeemedForSession(ctx, session.orgId, session._id);
+      const discountAmount = redeemed ? couponDiscountAmount(subtotal) : 0;
+      billTotal = Math.max(0, subtotal - discountAmount);
       await ctx.db.patch(session._id, { billTotal, settleStatus: 'charging' });
     }
 
@@ -346,6 +404,17 @@ export const beginTableSettle = internalMutation({
       .first();
 
     const lineItems = await buildCheckoutLineItems(ctx, session._id);
+    const redeemed = await findRedeemedForSession(ctx, session.orgId, session._id);
+    if (redeemed && billTotal > 0) {
+      const storeName = store?.name ?? 'ご利用';
+      // Stripe Checkout はマイナス単価を受け付けないため、割引後の合計を1行で渡す。
+      lineItems.length = 0;
+      lineItems.push({
+        name: `${storeName} お会計（クーポン ${redeemed.code} ${COUPON_DISCOUNT_PERCENT}%OFF）`,
+        unitAmount: billTotal,
+        quantity: 1,
+      });
+    }
 
     return {
       billTotal,
@@ -385,6 +454,8 @@ export const finishTableSettle = internalMutation({
       billTotal,
     });
 
+    // 次回クーポンは客がアンケート回答/スキップ後に surveys 側で発行する。
+
     if (session.email && session.receiptEmailSentAt === undefined) {
       const store = await ctx.db
         .query('stores')
@@ -407,7 +478,11 @@ export const finishTableSettle = internalMutation({
 // 会計確定（succeeded）済みには触れない。
 async function releaseChargingLock(ctx: MutationCtx, session: Doc<'tableSessions'>) {
   if (session.settleStatus !== 'charging') return false;
-  await ctx.db.patch(session._id, { settleStatus: undefined, billTotal: undefined });
+  await ctx.db.patch(session._id, {
+    settleStatus: undefined,
+    billTotal: undefined,
+    stripeSessionId: undefined,
+  });
   return true;
 }
 

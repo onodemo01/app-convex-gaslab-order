@@ -12,6 +12,11 @@ export const clock = (ms: number) => {
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 };
 
+export const dateJa = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+};
+
 // 配色（刷新デザインの C）
 export const C = {
   ink: '#171717',

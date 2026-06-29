@@ -7,7 +7,7 @@ import { ConvexError } from 'convex/values';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import { css } from '../lib/css';
-import { C, yen } from '../lib/format';
+import { C, yen, dateJa } from '../lib/format';
 
 export const Route = createFileRoute('/t/$slug/$tableToken')({
   component: GuestTablePage,
@@ -28,12 +28,7 @@ function tableClaimKey(slug: string, tableToken: string): string {
   return `tableClaim:${slug}:${tableToken}`;
 }
 
-// 次回クーポンの表示用コード（表示のみ・検証なし）。sessionId 由来なので再読込でも不変。
-function couponCode(sessionId: string): string {
-  const tail = sessionId.replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase();
-  return `GASLAB-${tail}`;
-}
-
+// 次回クーポンコードはサーバー発行後にのみ表示（アンケート前はコードを出さない）。
 function GuestTablePage() {
   const { slug, tableToken } = Route.useParams();
   const { canceled, s } = useSearch({ from: '/t/$slug/$tableToken' });
@@ -163,6 +158,8 @@ function GuestTableContent({
   const addOrder = useMutation(api.orders.addGuestOrder);
   const recordSoldOut = useMutation(api.orders.recordSoldOut);
   const submitSurvey = useMutation(api.surveys.submit);
+  const dismissSurvey = useMutation(api.surveys.dismiss);
+  const redeemCoupon = useMutation(api.coupons.redeem);
   const checkout = useAction(api.stripe.createTableCheckoutSession);
   const recover = useAction(api.stripe.recoverGuestCheckout);
 
@@ -171,15 +168,24 @@ function GuestTableContent({
   const [menuRefOpen, setMenuRefOpen] = useState(false);
   const [started, setStarted] = useState(false);
   const [confirmingPay, setConfirmingPay] = useState(false);
+  const [payWarnOpen, setPayWarnOpen] = useState(false);
+  const [unservedPayAck, setUnservedPayAck] = useState(false);
+  // 来店時のクーポン利用（再来客）。適用済みなら割引コードを保持（表示のみ）。
+  const [couponOpen, setCouponOpen] = useState(false);
+  const [couponInput, setCouponInput] = useState('');
+  const [couponApplied, setCouponApplied] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [farewell, setFarewell] = useState(false);
   const [secsLeft, setSecsLeft] = useState(5);
   // 会計後アンケート（任意）
   const [surveyDone, setSurveyDone] = useState(false);
+  const [revealedCouponCode, setRevealedCouponCode] = useState<string | null>(null);
+  const [revealedCouponExpiresAt, setRevealedCouponExpiresAt] = useState<number | null>(null);
   const [sat, setSat] = useState<number | null>(null);
   const [gender, setGender] = useState<string | null>(null);
   const [age, setAge] = useState<string | null>(null);
   const [revisit, setRevisit] = useState<string | null>(null);
+  const [comment, setComment] = useState('');
   const [toast, setToast] = useState<{ msg: string; kind: 'ink' | 'green' | 'amber' | 'red' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -190,6 +196,24 @@ function GuestTableContent({
   };
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
+  // サーバーに記録済みのクーポン適用を UI に反映（再読込後も維持）。
+  useEffect(() => {
+    setCouponApplied(session?.appliedCoupon?.code ?? null);
+  }, [session?.appliedCoupon?.code]);
+
+  // サーバー記録（再読込後も維持）＋送信直後の楽観更新。
+  useEffect(() => {
+    if (session?.surveyResponded) setSurveyDone(true);
+  }, [session?.surveyResponded]);
+
+  useEffect(() => {
+    if (session?.issuedCouponCode) setRevealedCouponCode(session.issuedCouponCode);
+  }, [session?.issuedCouponCode]);
+
+  useEffect(() => {
+    if (session?.issuedCouponExpiresAt) setRevealedCouponExpiresAt(session.issuedCouponExpiresAt);
+  }, [session?.issuedCouponExpiresAt]);
+
   // 会計が成立したか（Stripe webhook 反映後に true）。
   const settledNow = session?.settleStatus === 'succeeded' || session?.closedAt != null;
 
@@ -197,26 +221,33 @@ function GuestTableContent({
   // （可能ならタブも閉じる。スクリプトで開いたタブ以外はブラウザが閉じさせないので、お別れ画面が最終表示になる）。
   // アンケート送信/スキップで surveyDone=true → 下のカウントダウンが回り、お別れ画面へ。
   async function sendSurvey(skip: boolean) {
-    if (!skip) {
-      try {
-        await submitSurvey({
+    try {
+      if (skip) {
+        const res = await dismissSurvey({ slug, sessionId });
+        if (res.couponCode) setRevealedCouponCode(res.couponCode);
+        if (res.expiresAt) setRevealedCouponExpiresAt(res.expiresAt);
+      } else {
+        const res = await submitSurvey({
           slug,
           sessionId,
           satisfaction: sat ?? undefined,
           gender: gender ?? undefined,
           ageGroup: age ?? undefined,
           revisit: revisit ?? undefined,
-          couponCode: couponCode(sessionId),
+          comment: comment.trim() || undefined,
         });
-      } catch {
-        /* best-effort */
+        if (res.couponCode) setRevealedCouponCode(res.couponCode);
+        if (res.expiresAt) setRevealedCouponExpiresAt(res.expiresAt);
       }
+    } catch {
+      /* best-effort */
     }
     setSurveyDone(true);
   }
 
   useEffect(() => {
-    if (!settledNow || !surveyDone || farewell) return;
+    const answered = session?.surveyResponded || surveyDone;
+    if (!settledNow || !answered || farewell) return;
     setSecsLeft(5);
     const iv = setInterval(() => {
       setSecsLeft((n) => {
@@ -234,7 +265,7 @@ function GuestTableContent({
       });
     }, 1000);
     return () => clearInterval(iv);
-  }, [settledNow, surveyDone, farewell]);
+  }, [settledNow, surveyDone, farewell, session?.surveyResponded]);
 
   const menuList = menu ?? [];
   const itemByCode = (code: string) => menuList.find((m) => m.code != null && m.code === Number(code));
@@ -295,13 +326,48 @@ function GuestTableContent({
     }
   }
 
+  async function applyCoupon() {
+    const code = couponInput.trim();
+    if (!code) {
+      flash('クーポンコードを入力してください', 'red');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await redeemCoupon({ slug, sessionId, code });
+      setCouponApplied(res.code);
+      setCouponInput('');
+      setCouponOpen(false);
+      flash(res.already ? 'クーポンは適用済みです' : 'クーポンを適用しました（この会計から10%OFF）', 'green');
+    } catch (err) {
+      flash(err instanceof ConvexError ? String(err.data) : 'クーポンを適用できませんでした', 'red');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onPay() {
+    const unservedQty = (orders ?? []).filter((o) => o.servedAt == null).reduce((a, o) => a + o.qty, 0);
+    if (unservedQty > 0 && !unservedPayAck) {
+      setPayWarnOpen(true);
+      return;
+    }
     setBusy(true);
     try {
       const res = await checkout({ sessionId, slug, tableToken });
-      if (res.url) window.location.href = res.url;
+      if (res.url) {
+        window.location.assign(res.url);
+      } else {
+        flash('決済画面の URL が取得できませんでした。もう一度お試しください', 'red');
+      }
     } catch (err) {
-      flash(err instanceof Error ? err.message : '会計の開始に失敗しました', 'red');
+      const msg =
+        err instanceof ConvexError
+          ? String(err.data)
+          : err instanceof Error
+            ? err.message
+            : '会計の開始に失敗しました';
+      flash(msg, 'red');
     } finally {
       setBusy(false);
     }
@@ -326,9 +392,35 @@ function GuestTableContent({
     );
   }
 
-  const bill = session.billPreview ?? 0;
+  const billSubtotal = session.billSubtotal ?? session.billPreview ?? 0;
+  const bill = session.billPayable ?? session.billPreview ?? 0;
+  const couponDiscount = session.appliedCoupon?.discountAmount ?? 0;
   const charged = session.finalChargeAmount ?? bill;
   const placed = orders ?? [];
+  const unservedOrders = placed.filter((o) => o.servedAt == null);
+  const unservedQty = unservedOrders.reduce((a, o) => a + o.qty, 0);
+
+  function beginCheckout() {
+    if (unservedQty > 0 && !unservedPayAck) {
+      setPayWarnOpen(true);
+      return;
+    }
+    setPayWarnOpen(false);
+    setConfirmingPay(true);
+  }
+
+  function cancelCheckout() {
+    setConfirmingPay(false);
+    setPayWarnOpen(false);
+    setUnservedPayAck(false);
+  }
+
+  function proceedDespiteUnserved() {
+    setUnservedPayAck(true);
+    setPayWarnOpen(false);
+    setConfirmingPay(true);
+  }
+
   const charging = session.settleStatus === 'charging';
   // 完了画面はサーバー状態（会計済み/退店済み）でも開く。?paid=1 任せにしないことで、
   // 会計済みセッションに再アクセスしても注文画面を出さない＝再注文を防ぐ。
@@ -387,13 +479,82 @@ function GuestTableContent({
     </div>
   );
 
-  // 次回クーポン（表示のみ）。会計完了画面・お別れ画面に出す。
-  const couponBox = (
+  const surveyAnswered = !!(session?.surveyResponded || surveyDone);
+  const displayCouponCode = session?.issuedCouponCode ?? revealedCouponCode;
+  const displayCouponExpiresAt = session?.issuedCouponExpiresAt ?? revealedCouponExpiresAt;
+  const showCouponBox = surveyAnswered && !!displayCouponCode;
+
+  // 次回クーポン（アンケート回答/スキップ後・サーバー発行コードのみ表示）。
+  const couponBox = showCouponBox ? (
     <div style={css('width:100%; margin-top:8px; border:1px dashed #f59e0b; background:#fffbeb; border-radius:4px; padding:12px 14px; display:flex; flex-direction:column; align-items:center; gap:5px;')}>
       <div style={css('font-size:11px; font-weight:700; color:#b45309; letter-spacing:.04em;')}>🎟 次回ご来店で使えるクーポン</div>
       <div style={css('font-size:15px; font-weight:800; color:#92400e;')}>次回のお会計 10%OFF</div>
-      <div style={css('font-size:16px; font-weight:700; color:#171717; background:#fff; border:1px solid #fcd9a6; border-radius:3px; padding:4px 14px; letter-spacing:.14em; font-variant-numeric:tabular-nums;')}>{couponCode(sessionId)}</div>
-      <div style={css('font-size:10px; color:#a16207; line-height:1.5; text-align:center;')}>次回ご注文時にこのコードをスタッフへお伝えください</div>
+      <div style={css('font-size:16px; font-weight:700; color:#171717; background:#fff; border:1px solid #fcd9a6; border-radius:3px; padding:4px 14px; letter-spacing:.14em; font-variant-numeric:tabular-nums;')}>{displayCouponCode}</div>
+      {displayCouponExpiresAt != null && (
+        <div style={css('font-size:11px; font-weight:700; color:#b45309;')}>有効期限：{dateJa(displayCouponExpiresAt)}まで</div>
+      )}
+      <div style={css('font-size:10px; color:#a16207; line-height:1.5; text-align:center;')}>
+        発行から3ヶ月以内・1回限り・譲渡不可<br />次回ご注文時にこのコードを入力してください
+      </div>
+    </div>
+  ) : surveyAnswered ? (
+    <div style={css('margin-top:8px; font-size:11px; color:#94a3b8;')}>クーポンを発行しています…</div>
+  ) : null;
+
+  // 注文履歴（キッチン提供状況をリアルタイム反映）。
+  const orderHistoryBlock = (
+    <div style={css('border:1px solid #e6e9ee; border-radius:2px; padding:12px 13px;')}>
+      <div style={css('font-size:11px; font-weight:700; color:#64748b; margin-bottom:8px; letter-spacing:.03em;')}>注文履歴</div>
+      <div style={css('display:flex; flex-direction:column; gap:7px;')}>
+        {placed.map((o) => {
+          const served = o.servedAt != null;
+          return (
+            <div key={o._id} style={css('display:flex; align-items:center; gap:8px; font-size:13px;')}>
+              <span style={css('flex:1; min-width:0; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;')}>{o.menuName}</span>
+              <span className="tnum" style={css('color:#94a3b8;')}>×{o.qty}</span>
+              <span style={css(`flex:0 0 auto; font-size:10px; font-weight:700; padding:2px 7px; border-radius:2px; color:${served ? '#15803d' : '#1d4ed8'}; background:${served ? '#eaf5ee' : '#eff6ff'}; border:1px solid ${served ? '#bbf7d0' : '#bfdbfe'};`)}>
+                {served ? '提供済み' : '調理中'}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  // クーポン利用（来店時・任意）。前回もらったコードを入力して再来を記録。
+  const couponEntry = (session.appliedCoupon ?? couponApplied) ? (
+    <div style={css('width:100%; border:1px solid #bbf7d0; background:#f0fdf4; border-radius:4px; padding:10px 13px; display:flex; align-items:center; gap:8px;')}>
+      <span style={css('font-size:14px;')}>🎟</span>
+      <div style={css('flex:1; min-width:0;')}>
+        <div style={css('font-size:12px; font-weight:700; color:#166534;')}>クーポン適用：この会計から10%OFF</div>
+        <div style={css('font-size:10px; color:#15803d; letter-spacing:.06em;')}>{session.appliedCoupon?.code ?? couponApplied}</div>
+        {couponDiscount > 0 && (
+          <div style={css('font-size:11px; color:#15803d; margin-top:2px;')}>割引 {yen(couponDiscount)}（お支払い {yen(bill)}）</div>
+        )}
+      </div>
+    </div>
+  ) : (
+    <div style={css('width:100%; border:1px solid #eef1f4; border-radius:4px; overflow:hidden;')}>
+      <button onClick={() => setCouponOpen((p) => !p)} style={css('width:100%; display:flex; align-items:center; justify-content:space-between; padding:10px 13px; border:none; background:#fafbfc; color:#475569; font-size:12px; font-weight:700;')}>
+        <span>🎟 クーポンをお持ちの方</span>
+        <span style={css('color:#94a3b8;')}>{couponOpen ? '閉じる ▲' : '入力 ▼'}</span>
+      </button>
+      {couponOpen && (
+        <div style={css('padding:11px 13px; border-top:1px solid #eef1f4; display:flex; flex-direction:column; gap:8px;')}>
+          <div style={css('font-size:11px; color:#94a3b8; line-height:1.5;')}>前回お渡ししたクーポンコード（GASLAB-xxxx）を入力してください。有効期限は発行から3ヶ月・1回限りです。</div>
+          <div style={css('display:flex; gap:7px;')}>
+            <input
+              value={couponInput}
+              onChange={(e) => setCouponInput(e.target.value)}
+              placeholder="GASLAB-XXXX"
+              autoCapitalize="characters"
+              style={css('flex:1; min-width:0; height:40px; border:1px solid #cbd5e1; border-radius:3px; padding:0 11px; font-size:14px; letter-spacing:.06em; color:#171717;')}
+            />
+            <button onClick={applyCoupon} disabled={busy} style={css('flex:0 0 auto; height:40px; padding:0 16px; border-radius:3px; border:none; background:#171717; color:#fff; font-size:13px; font-weight:700;')}>適用</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -409,6 +570,13 @@ function GuestTableContent({
   const surveyForm = (
     <div style={css('width:100%; margin-top:12px; padding-top:12px; border-top:1px dashed #e2e8f0; display:flex; flex-direction:column; gap:11px;')}>
       <div style={css('font-size:12px; font-weight:700; color:#475569;')}>アンケートにご協力ください（任意・数タップ）</div>
+      <div style={css('border:1px dashed #fcd9a6; background:#fffbeb; border-radius:4px; padding:10px 12px; text-align:center;')}>
+        <div style={css('font-size:11px; font-weight:700; color:#b45309;')}>🎟 回答後に次回クーポンを発行します</div>
+        <div style={css('font-size:11px; color:#a16207; line-height:1.6; margin-top:4px;')}>
+          送信またはスキップ後、次回ご来店で使える<br />お会計 <strong>10%OFF</strong> クーポンコードを表示します<br />
+          <span style={css('font-size:10px;')}>（発行から3ヶ月以内・1回限り・譲渡不可）</span>
+        </div>
+      </div>
       <div style={css('display:flex; flex-direction:column; gap:5px; align-items:center;')}>
         <div style={css('font-size:11px; color:#94a3b8;')}>満足度</div>
         <div style={css('display:flex; gap:4px;')}>
@@ -439,6 +607,16 @@ function GuestTableContent({
           {choiceBtn(revisit === 'low', 'うーん', () => setRevisit('low'))}
         </div>
       </div>
+      <div style={css('display:flex; flex-direction:column; gap:5px;')}>
+        <div style={css('font-size:11px; color:#94a3b8; text-align:center;')}>ご意見・ご感想（任意）</div>
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value.slice(0, 400))}
+          placeholder="料理・接客・お店の雰囲気など、お気づきの点をご自由にどうぞ"
+          rows={3}
+          style={css('width:100%; box-sizing:border-box; border:1px solid #e2e8f0; border-radius:3px; padding:8px 10px; font-size:13px; line-height:1.6; color:#1e293b; resize:none; font-family:inherit;')}
+        />
+      </div>
       <div style={css('display:flex; gap:8px; margin-top:2px;')}>
         <button onClick={() => void sendSurvey(false)} style={css('flex:1; height:38px; border-radius:3px; border:none; background:#15803d; color:#fff; font-size:13px; font-weight:700;')}>送信する</button>
         <button onClick={() => void sendSurvey(true)} style={css('height:38px; padding:0 14px; border-radius:3px; border:1px solid #cbd5e1; background:#fff; color:#94a3b8; font-size:12px; font-weight:500;')}>スキップ</button>
@@ -468,7 +646,7 @@ function GuestTableContent({
                 <div style={css('width:48px;height:48px;border-radius:50%;background:#15803d;color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;')}>✓</div>
                 <div style={css('font-size:20px; font-weight:700; color:#166534;')}>ありがとうございました</div>
                 <div style={css('font-size:12px; color:#15803d; line-height:1.7;')}>またのご来店をお待ちしております。<br />この画面は閉じていただけます。</div>
-                {couponBox}
+                {showCouponBox && couponBox}
               </div>
             ) : (
               <div style={css(`display:flex; flex-direction:column; align-items:center; gap:8px; border:1px solid ${settledNow ? '#bbf7d0' : '#fcd9a6'}; background:${settledNow ? '#f0fdf4' : '#fffbeb'}; border-radius:2px; padding:26px 16px; text-align:center;`)}>
@@ -478,9 +656,11 @@ function GuestTableContent({
                     <div style={css('font-size:18px; font-weight:700; color:#166534;')}>お会計が完了しました</div>
                     <div style={css('font-size:12px; color:#15803d;')}>ご利用ありがとうございました</div>
                     <div className="tnum" style={css('margin-top:6px; font-size:16px; font-weight:700; color:#171717;')}>お支払い {yen(charged)}</div>
-                    {couponBox}
-                    {surveyDone ? (
-                      <div style={css('margin-top:8px; font-size:11px; color:#94a3b8;')}>あと {secsLeft} 秒で画面を閉じます…</div>
+                    {surveyAnswered ? (
+                      <>
+                        {couponBox}
+                        <div style={css('margin-top:8px; font-size:11px; color:#94a3b8;')}>あと {secsLeft} 秒で画面を閉じます…</div>
+                      </>
                     ) : (
                       surveyForm
                     )}
@@ -496,11 +676,15 @@ function GuestTableContent({
 
             {/* 会計処理中 */}
             {charging && !completed && (
-              <div style={css('display:flex; flex-direction:column; align-items:center; gap:10px; border:1px solid #fcd9a6; background:#fffbeb; border-radius:2px; padding:30px 16px; text-align:center;')}>
-                <div style={css('white-space:nowrap; font-size:13px; font-weight:700; color:#b45309;')}><span style={css('animation:lampoBlink 1s infinite;')}>●</span> 会計処理中</div>
-                <div style={css('font-size:12px; color:#b45309; line-height:1.6;')}>Stripe の決済画面でお支払いください。<br />中断した場合は下のボタンでやり直せます。</div>
-                <div className="tnum" style={css('margin-top:4px; font-size:16px; font-weight:700; color:#171717;')}>{yen(bill)}</div>
-                <button onClick={onRecover} disabled={busy} style={css('margin-top:6px; height:36px; padding:0 14px; border-radius:2px; border:1px solid #fcd9a6; background:#fff; color:#b45309; font-size:12px; font-weight:600;')}>会計をやり直す</button>
+              <div style={css('display:flex; flex-direction:column; gap:13px;')}>
+                <div style={css('display:flex; flex-direction:column; align-items:center; gap:10px; border:1px solid #fcd9a6; background:#fffbeb; border-radius:2px; padding:30px 16px; text-align:center;')}>
+                  <div style={css('white-space:nowrap; font-size:13px; font-weight:700; color:#b45309;')}><span style={css('animation:lampoBlink 1s infinite;')}>●</span> 会計処理中</div>
+                  <div style={css('font-size:12px; color:#b45309; line-height:1.6;')}>Stripe の決済画面でお支払いください。<br />画面が開かない場合は下のボタンを押してください。</div>
+                  <div className="tnum" style={css('margin-top:4px; font-size:16px; font-weight:700; color:#171717;')}>{yen(bill)}</div>
+                  <button onClick={onPay} disabled={busy} style={css('margin-top:6px; width:100%; height:44px; border-radius:2px; border:none; background:#171717; color:#fff; font-size:14px; font-weight:700;')}>決済画面を開く</button>
+                  <button onClick={onRecover} disabled={busy} style={css('height:36px; padding:0 14px; border-radius:2px; border:1px solid #fcd9a6; background:#fff; color:#b45309; font-size:12px; font-weight:600;')}>会計をやり直す</button>
+                </div>
+                {placed.length > 0 && orderHistoryBlock}
               </div>
             )}
 
@@ -515,6 +699,7 @@ function GuestTableContent({
                 </div>
                 <div style={css('font-size:12px; color:#94a3b8; line-height:1.7; margin-top:6px;')}>紙メニューの4桁番号を入力して<br />ご注文いただけます。</div>
                 <button onClick={() => setStarted(true)} style={css('margin-top:14px; width:100%; height:48px; border-radius:2px; border:none; background:#171717; color:#fff; font-size:15px; font-weight:700;')}>注文を始める</button>
+                <div style={css('width:100%; margin-top:12px;')}>{couponEntry}</div>
               </div>
             )}
 
@@ -570,27 +755,60 @@ function GuestTableContent({
                   </div>
                 )}
 
+                {placed.length > 0 && orderHistoryBlock}
+
                 {placed.length > 0 && (
                   <div style={css('border:1px solid #e6e9ee; border-radius:2px; padding:12px 13px;')}>
-                    <div style={css('font-size:11px; font-weight:700; color:#64748b; margin-bottom:8px; letter-spacing:.03em;')}>ご注文（卓 {session.tableLabel} の伝票）</div>
+                    <div style={css('font-size:11px; font-weight:700; color:#64748b; margin-bottom:8px; letter-spacing:.03em;')}>お会計</div>
                     <div style={css('display:flex; flex-direction:column; gap:6px;')}>
-                      {placed.map((o) => (
-                        <div key={o._id} style={css('display:flex; align-items:center; gap:8px; font-size:13px;')}>
-                          <span style={css('flex:1; min-width:0; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;')}>{o.menuName}</span>
-                          <span className="tnum" style={css('color:#94a3b8;')}>×{o.qty}</span>
-                          <span className="tnum" style={css('font-weight:700; color:#171717; width:54px; text-align:right;')}>{o.lineTotal !== null ? yen(o.lineTotal) : '—'}</span>
+                      {couponDiscount > 0 && (
+                        <>
+                          <div style={css('display:flex; justify-content:space-between; align-items:baseline;')}>
+                            <span style={css('font-size:12px; color:#64748b;')}>小計（税込）</span>
+                            <span className="tnum" style={css('font-size:14px; color:#64748b;')}>{yen(billSubtotal)}</span>
+                          </div>
+                          <div style={css('display:flex; justify-content:space-between; align-items:baseline;')}>
+                            <span style={css('font-size:12px; font-weight:700; color:#15803d;')}>クーポン割引（10%OFF）</span>
+                            <span className="tnum" style={css('font-size:14px; font-weight:700; color:#15803d;')}>−{yen(couponDiscount)}</span>
+                          </div>
+                        </>
+                      )}
+                      <div style={css('display:flex; justify-content:space-between; align-items:baseline;')}>
+                        <span style={css('font-size:12px; font-weight:700; color:#334155;')}>合計（税込）</span>
+                        <span className="tnum" style={css('font-size:18px; font-weight:700; color:#171717;')}>{yen(bill)}</span>
+                      </div>
+                    </div>
+                    {canPay && payWarnOpen && !confirmingPay && (
+                      <div style={css('margin-top:11px; border:1px solid #fcd9a6; border-radius:2px; padding:13px; display:flex; flex-direction:column; gap:10px; background:#fffbeb;')}>
+                        <div style={css('font-size:14px; font-weight:700; color:#b45309; text-align:center;')}>調理中の料理があります</div>
+                        <div style={css('font-size:12px; color:#92400e; line-height:1.6; text-align:center;')}>
+                          まだ提供されていない料理が {unservedQty} 点あります。<br />提供を待たずに会計へ進みますか？
                         </div>
-                      ))}
-                    </div>
-                    <div style={css('display:flex; justify-content:space-between; align-items:baseline; margin-top:10px; padding-top:9px; border-top:1px solid #eef1f4;')}>
-                      <span style={css('font-size:12px; font-weight:700; color:#334155;')}>合計（税込）</span>
-                      <span className="tnum" style={css('font-size:18px; font-weight:700; color:#171717;')}>{yen(bill)}</span>
-                    </div>
-                    {canPay && !confirmingPay && (
-                      <button onClick={() => setConfirmingPay(true)} style={css('width:100%; height:50px; margin-top:11px; border-radius:2px; border:none; background:#171717; color:#fff; font-size:15px; font-weight:700;')}>会計へ進む（{yen(bill)}）</button>
+                        <div style={css('display:flex; flex-direction:column; gap:5px; padding:8px 10px; background:#fff; border:1px solid #fcd9a6; border-radius:2px;')}>
+                          {unservedOrders.map((o) => (
+                            <div key={o._id} style={css('display:flex; align-items:center; gap:8px; font-size:12px; color:#78350f;')}>
+                              <span style={css('flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;')}>{o.menuName}</span>
+                              <span className="tnum" style={css('font-weight:700;')}>×{o.qty}</span>
+                              <span style={css('font-size:10px; font-weight:700; color:#1d4ed8;')}>調理中</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={css('display:flex; gap:8px;')}>
+                          <button onClick={() => setPayWarnOpen(false)} disabled={busy} style={css('flex:1; height:48px; border-radius:2px; border:1px solid #fcd9a6; background:#fff; color:#b45309; font-size:14px; font-weight:700;')}>提供を待つ</button>
+                          <button onClick={proceedDespiteUnserved} disabled={busy} style={css('flex:1; height:48px; border-radius:2px; border:none; background:#171717; color:#fff; font-size:14px; font-weight:700;')}>このまま会計へ</button>
+                        </div>
+                      </div>
+                    )}
+                    {canPay && !confirmingPay && !payWarnOpen && (
+                      <button onClick={beginCheckout} style={css('width:100%; height:50px; margin-top:11px; border-radius:2px; border:none; background:#171717; color:#fff; font-size:15px; font-weight:700;')}>会計へ進む（{yen(bill)}）</button>
                     )}
                     {canPay && confirmingPay && (
                       <div style={css('margin-top:11px; border:1px solid #cbd5e1; border-radius:2px; padding:13px; display:flex; flex-direction:column; gap:10px; background:#fbfcfd;')}>
+                        {unservedQty > 0 && (
+                          <div style={css('font-size:11px; color:#b45309; line-height:1.5; text-align:center; border:1px solid #fcd9a6; background:#fffbeb; border-radius:2px; padding:8px 10px;')}>
+                            調理中の料理 {unservedQty} 点を含むお会計です
+                          </div>
+                        )}
                         <div style={css('font-size:14px; font-weight:700; color:#171717; text-align:center;')}>このお会計でよろしいですか？</div>
                         <div style={css('display:flex; justify-content:space-between; align-items:baseline;')}>
                           <span style={css('font-size:12px; font-weight:700; color:#334155;')}>合計（税込）</span>
@@ -598,13 +816,15 @@ function GuestTableContent({
                         </div>
                         <div style={css('font-size:11px; color:#94a3b8; line-height:1.6;')}>「会計する」を押すと決済画面に進みます。以降は追加のご注文ができません。</div>
                         <div style={css('display:flex; gap:8px;')}>
-                          <button onClick={() => setConfirmingPay(false)} disabled={busy} style={css('flex:0 0 auto; height:48px; padding:0 16px; border-radius:2px; border:1px solid #cbd5e1; background:#fff; color:#64748b; font-size:14px; font-weight:600;')}>もどる</button>
+                          <button onClick={cancelCheckout} disabled={busy} style={css('flex:0 0 auto; height:48px; padding:0 16px; border-radius:2px; border:1px solid #cbd5e1; background:#fff; color:#64748b; font-size:14px; font-weight:600;')}>もどる</button>
                           <button onClick={onPay} disabled={busy} style={css('flex:1; height:48px; border-radius:2px; border:none; background:#171717; color:#fff; font-size:15px; font-weight:700;')}>会計する（{yen(bill)}）</button>
                         </div>
                       </div>
                     )}
                   </div>
                 )}
+
+                {couponEntry}
 
                 <div style={css('border:1px solid #eef1f4; border-radius:2px; overflow:hidden;')}>
                   <button onClick={() => setMenuRefOpen((p) => !p)} style={css('width:100%; display:flex; align-items:center; justify-content:space-between; padding:11px 13px; border:none; background:#fafbfc; color:#475569; font-size:12px; font-weight:700;')}>

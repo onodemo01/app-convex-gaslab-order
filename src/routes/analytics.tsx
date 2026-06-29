@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { useMutation } from 'convex/react';
+import { useMutation, useAction } from 'convex/react';
 import { convexQuery } from '@convex-dev/react-query';
 import { api } from '../../convex/_generated/api';
 import { css } from '../lib/css';
@@ -20,8 +20,18 @@ type Report = {
   hourly: { hour: number; orderedCount: number; asapServedCount: number; avgAsapMs: number | null }[];
   dishes: { menuName: string; code: number | null; serveAsap: boolean; orderedCount: number; servedCount: number; pendingCount: number; avgMs: number | null; maxMs: number | null }[];
   sessions: { id: string; label: string; openedAt: number; closedAt: number | null; firstOrderAt: number | null; qty: number; settleStatus: string | null }[];
-  survey: { responses: number; avgSatisfaction: number | null; gender: { male: number; female: number; other: number }; age: Record<string, number>; revisit: { high: number; mid: number; low: number } };
+  survey: { responses: number; avgSatisfaction: number | null; gender: { male: number; female: number; other: number }; age: Record<string, number>; revisit: { high: number; mid: number; low: number }; commentCount: number };
+  coupon: { issued: number; redeemed: number; redemptionRate: number | null; repeatSessions: number; repeatRate: number | null };
+  comments: { text: string; satisfaction: number | null; at: number }[];
 };
+type Sentiment = 'positive' | 'negative' | 'neutral';
+type SentimentResult =
+  | { status: 'ok'; model: string; total: number; counts: Record<Sentiment, number>; summary: string; highlights: { sentiment: Sentiment; text: string }[] }
+  | { status: 'no_key' }
+  | { status: 'empty' }
+  | { status: 'error'; message: string };
+type Finding = { id: string; kind: 'warn' | 'good' | 'info'; title: string; body: string; action: string };
+type Insights = { period: Period; findings: Finding[]; groups: number };
 
 const PERIOD_TABS: [Period, string][] = [
   ['day', '日別'],
@@ -32,8 +42,17 @@ const PERIOD_TABS: [Period, string][] = [
 function AnalyticsPage() {
   const [period, setPeriod] = useState<Period>('day');
   const { data } = useQuery(convexQuery(api.analytics.report, { period }));
+  const { data: insightsData } = useQuery(convexQuery(api.analytics.insights, { period }));
   const seedHistory = useMutation(api.dev.seedHistory);
   const [seeding, setSeeding] = useState(false);
+  const summarize = useAction(api.analytics.summarize);
+  const [summarizing, setSummarizing] = useState(false);
+  type Summary = { status: 'ok'; summary: string; model: string } | { status: 'no_key' } | { status: 'error'; message: string };
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const analyzeComments = useAction(api.analytics.analyzeComments);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [sentiment, setSentiment] = useState<SentimentResult | null>(null);
+  useEffect(() => { setSummary(null); setSentiment(null); }, [period]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -41,6 +60,8 @@ function AnalyticsPage() {
   }, []);
 
   const r = data as Report | undefined;
+  const ins = insightsData as Insights | undefined;
+  const findings = ins?.findings ?? [];
   const k = r?.kpis;
   const trend = r?.trend ?? [];
   const hourly = r?.hourly ?? [];
@@ -121,6 +142,66 @@ function AnalyticsPage() {
             </div>
           </div>
 
+          {/* インサイト（ルールベースの気づき＋打ち手） */}
+          {!empty && findings.length > 0 && (
+            <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
+              <div style={css('padding:10px 14px; background:#fafbfc; border-bottom:1px solid #e2e8f0; font-size:12px; font-weight:700; color:#475569; display:flex; align-items:center; gap:8px;')}>
+                <span>インサイト（{periodTitle}の気づきと打ち手）</span>
+                <span style={css('font-size:10px; font-weight:500; color:#94a3b8;')}>集計から自動抽出</span>
+              </div>
+              <div style={css('display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; padding:14px 14px;')}>
+                {findings.map((fd) => (
+                  <Insight key={fd.id} fd={fd} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* AI まとめ（任意・第2層） */}
+          {!empty && (
+            <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
+              <div style={css('padding:10px 14px; background:#fafbfc; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; justify-content:space-between; gap:10px;')}>
+                <span style={css('font-size:12px; font-weight:700; color:#475569;')}>AI まとめ（{periodTitle}）</span>
+                <button
+                  onClick={async () => {
+                    if (summarizing) return;
+                    setSummarizing(true);
+                    try {
+                      setSummary((await summarize({ period })) as Summary);
+                    } catch (e) {
+                      setSummary({ status: 'error', message: e instanceof Error ? e.message : '呼び出しに失敗しました' });
+                    } finally {
+                      setSummarizing(false);
+                    }
+                  }}
+                  disabled={summarizing}
+                  style={css(`white-space:nowrap; height:28px; padding:0 12px; border:none; background:#171717; color:#fff; font-size:12px; font-weight:700; border-radius:2px; ${summarizing ? 'opacity:.6;' : ''}`)}
+                >
+                  {summarizing ? '生成中…' : summary ? '再生成' : 'AIでまとめる'}
+                </button>
+              </div>
+              <div style={css('padding:14px 16px;')}>
+                {!summary && !summarizing && (
+                  <div style={css('font-size:12px; color:#94a3b8; line-height:1.7;')}>集計データを AI に渡して、店長向けの要約と打ち手を文章で作ります。「AIでまとめる」を押してください。</div>
+                )}
+                {summary?.status === 'ok' && (
+                  <>
+                    <div style={css('font-size:13px; color:#1e293b; line-height:1.85; white-space:pre-wrap;')}>{summary.summary}</div>
+                    <div style={css('margin-top:10px; font-size:10px; color:#cbd5e1;')}>{summary.model} による生成・参考情報です</div>
+                  </>
+                )}
+                {summary?.status === 'no_key' && (
+                  <div style={css('font-size:12px; color:#b45309; line-height:1.8; border:1px solid #fcd9a6; background:#fffbeb; border-radius:2px; padding:11px 13px;')}>
+                    AI 要約は未設定です。利用するには Convex 本番環境に <span style={css('font-weight:700;')}>ANTHROPIC_API_KEY</span> を設定してください（コマンド例: <span style={css('font-family:monospace; font-size:11px;')}>npx convex env set ANTHROPIC_API_KEY sk-ant-... --prod</span>）。鍵の設定はご本人が行ってください。
+                  </div>
+                )}
+                {summary?.status === 'error' && (
+                  <div style={css('font-size:12px; color:#dc2626; line-height:1.7; border:1px solid #fecaca; background:#fef2f2; border-radius:2px; padding:11px 13px;')}>{summary.message}</div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* 客層・満足度（アンケート） */}
           {r?.survey && (
             <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
@@ -149,6 +230,96 @@ function AnalyticsPage() {
                   <SurveyBars title="また来たい？" rows={[['ぜひ', r.survey.revisit.high, '#15803d'], ['たぶん', r.survey.revisit.mid, '#b45309'], ['うーん', r.survey.revisit.low, '#94a3b8']]} />
                 </div>
               )}
+            </div>
+          )}
+
+          {/* クーポン・リピート */}
+          {r?.coupon && (
+            <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
+              <div style={css('padding:10px 14px; background:#fafbfc; border-bottom:1px solid #e2e8f0; font-size:12px; font-weight:700; color:#475569;')}>クーポン・リピート（クーポンコード＝再来客の手がかり）</div>
+              <div style={css('display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:0;')}>
+                <CouponCell lbl="クーポン発行" sub={`${periodTitle}・会計完了で配布`} val={(r.coupon.issued).toLocaleString('ja-JP')} unit="枚" />
+                <CouponCell lbl="クーポン利用" sub="次回来店で適用" val={(r.coupon.redeemed).toLocaleString('ja-JP')} unit="枚" />
+                <CouponCell lbl="利用率" sub="利用 ÷ 発行" val={r.coupon.redemptionRate != null ? String(r.coupon.redemptionRate) : '—'} unit={r.coupon.redemptionRate != null ? '%' : ''} accent="#1d4ed8" />
+                <CouponCell lbl="リピート率" sub="会計組のうちクーポン利用" val={r.coupon.repeatRate != null ? String(r.coupon.repeatRate) : '—'} unit={r.coupon.repeatRate != null ? '%' : ''} accent="#15803d" />
+              </div>
+              <div style={css('padding:8px 14px 10px; border-top:1px solid #eef1f4; font-size:10px; color:#94a3b8; line-height:1.6;')}>
+                利用率＝期間内に配ったクーポンがどれだけ使われたか／リピート率＝この期間の会計 {(k?.groups ?? 0).toLocaleString('ja-JP')} 組のうち {r.coupon.repeatSessions.toLocaleString('ja-JP')} 組がクーポン経由の再来。
+              </div>
+            </div>
+          )}
+
+          {/* お客様の声（自由記述）＋ AI ネガポジ分析 */}
+          {!empty && (
+            <div style={css('border:1px solid #e2e8f0; border-radius:2px; overflow:hidden; background:#fff;')}>
+              <div style={css('padding:10px 14px; background:#fafbfc; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; justify-content:space-between; gap:10px;')}>
+                <span style={css('font-size:12px; font-weight:700; color:#475569;')}>お客様の声（自由記述・{r?.comments.length ?? 0} 件）</span>
+                <button
+                  onClick={async () => {
+                    if (analyzing) return;
+                    setAnalyzing(true);
+                    try {
+                      setSentiment((await analyzeComments({ period })) as SentimentResult);
+                    } catch (e) {
+                      setSentiment({ status: 'error', message: e instanceof Error ? e.message : '呼び出しに失敗しました' });
+                    } finally {
+                      setAnalyzing(false);
+                    }
+                  }}
+                  disabled={analyzing || (r?.comments.length ?? 0) === 0}
+                  style={css(`white-space:nowrap; height:28px; padding:0 12px; border:none; background:${(r?.comments.length ?? 0) === 0 ? '#e2e8f0' : '#171717'}; color:${(r?.comments.length ?? 0) === 0 ? '#94a3b8' : '#fff'}; font-size:12px; font-weight:700; border-radius:2px; ${analyzing ? 'opacity:.6;' : ''}`)}
+                >
+                  {analyzing ? '分析中…' : sentiment ? '再分析' : 'AIでネガポジ分析'}
+                </button>
+              </div>
+
+              {/* AI 分析結果 */}
+              {sentiment && (
+                <div style={css('padding:14px 16px; border-bottom:1px solid #eef1f4;')}>
+                  {sentiment.status === 'ok' && (
+                    <>
+                      <SentimentBar counts={sentiment.counts} total={sentiment.total} />
+                      {sentiment.summary && <div style={css('margin-top:12px; font-size:13px; color:#1e293b; line-height:1.8;')}>{sentiment.summary}</div>}
+                      {sentiment.highlights.length > 0 && (
+                        <div style={css('margin-top:12px; display:flex; flex-direction:column; gap:6px;')}>
+                          {sentiment.highlights.map((h, i) => (
+                            <div key={i} style={css('display:flex; align-items:flex-start; gap:8px;')}>
+                              <span style={css(`flex:0 0 auto; font-size:10px; font-weight:700; border-radius:2px; padding:2px 6px; margin-top:1px; ${sentimentTag(h.sentiment)}`)}>{sentimentLabel(h.sentiment)}</span>
+                              <span style={css('font-size:12px; color:#334155; line-height:1.6;')}>{h.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div style={css('margin-top:10px; font-size:10px; color:#cbd5e1;')}>{sentiment.model} による分析・参考情報です</div>
+                    </>
+                  )}
+                  {sentiment.status === 'no_key' && (
+                    <div style={css('font-size:12px; color:#b45309; line-height:1.8; border:1px solid #fcd9a6; background:#fffbeb; border-radius:2px; padding:11px 13px;')}>AI 分析は未設定です。Convex 本番に <span style={css('font-weight:700;')}>ANTHROPIC_API_KEY</span> を設定してください。</div>
+                  )}
+                  {sentiment.status === 'empty' && (
+                    <div style={css('font-size:12px; color:#94a3b8;')}>この期間の自由記述がまだありません。</div>
+                  )}
+                  {sentiment.status === 'error' && (
+                    <div style={css('font-size:12px; color:#dc2626; line-height:1.7; border:1px solid #fecaca; background:#fef2f2; border-radius:2px; padding:11px 13px;')}>{sentiment.message}</div>
+                  )}
+                </div>
+              )}
+
+              {/* 生のコメント一覧 */}
+              <div style={css('padding:8px 14px 12px; max-height:260px; overflow-y:auto;')}>
+                {(r?.comments.length ?? 0) === 0 ? (
+                  <div style={css('padding:10px 0; font-size:12px; color:#94a3b8;')}>この期間の自由記述はまだありません。客スマホの会計後アンケートから集まります。</div>
+                ) : (
+                  <div style={css('display:flex; flex-direction:column; gap:8px;')}>
+                    {(r?.comments ?? []).map((c, i) => (
+                      <div key={i} style={css('display:flex; align-items:flex-start; gap:9px; padding:9px 11px; border:1px solid #eef1f4; border-radius:2px;')}>
+                        <span style={css(`flex:0 0 auto; font-size:11px; font-weight:700; color:${c.satisfaction != null && c.satisfaction <= 2 ? '#dc2626' : c.satisfaction != null && c.satisfaction >= 4 ? '#15803d' : '#94a3b8'}; width:30px;`)}>{c.satisfaction != null ? '★' + c.satisfaction : '—'}</span>
+                        <span style={css('flex:1; min-width:0; font-size:13px; color:#1e293b; line-height:1.6;')}>{c.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -288,6 +459,69 @@ function SurveyBars({ title, rows }: { title: string; rows: [string, number, str
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function sentimentLabel(s: Sentiment) {
+  return s === 'positive' ? 'ポジ' : s === 'negative' ? 'ネガ' : '中立';
+}
+function sentimentTag(s: Sentiment) {
+  return s === 'positive' ? 'color:#15803d; background:#f0fdf4;' : s === 'negative' ? 'color:#dc2626; background:#fef2f2;' : 'color:#475569; background:#f1f5f9;';
+}
+function SentimentBar({ counts, total }: { counts: Record<Sentiment, number>; total: number }) {
+  const sum = counts.positive + counts.negative + counts.neutral || 1;
+  const seg: [Sentiment, number, string][] = [
+    ['positive', counts.positive, '#16a34a'],
+    ['neutral', counts.neutral, '#94a3b8'],
+    ['negative', counts.negative, '#dc2626'],
+  ];
+  return (
+    <div style={css('display:flex; flex-direction:column; gap:7px;')}>
+      <div style={css('display:flex; height:14px; border-radius:3px; overflow:hidden; background:#f1f5f9;')}>
+        {seg.map(([s, n, color]) => (n > 0 ? <span key={s} title={`${sentimentLabel(s)} ${n}`} style={css(`width:${(n / sum) * 100}%; background:${color};`)} /> : null))}
+      </div>
+      <div style={css('display:flex; gap:14px;')}>
+        {seg.map(([s, n, color]) => (
+          <span key={s} style={css('display:flex; align-items:center; gap:5px; font-size:11px; color:#475569;')}>
+            <span style={css(`width:9px; height:9px; border-radius:2px; background:${color};`)} />
+            {sentimentLabel(s)} <span className="tnum" style={css('font-weight:700; color:#171717;')}>{n}</span>
+            <span style={css('color:#94a3b8;')}>（{Math.round((n / sum) * 100)}%）</span>
+          </span>
+        ))}
+        <span style={css('font-size:11px; color:#cbd5e1; margin-left:auto;')}>{total} 件を分析</span>
+      </div>
+    </div>
+  );
+}
+
+function Insight({ fd }: { fd: Finding }) {
+  const palette = {
+    warn: { bar: '#f59e0b', tag: '#b45309', tagBg: '#fffbeb', tagText: '要対応' },
+    good: { bar: '#16a34a', tag: '#15803d', tagBg: '#f0fdf4', tagText: '好調' },
+    info: { bar: '#64748b', tag: '#475569', tagBg: '#f1f5f9', tagText: '参考' },
+  }[fd.kind];
+  return (
+    <div style={css(`border:1px solid #eef1f4; border-left:3px solid ${palette.bar}; border-radius:2px; padding:12px 13px; display:flex; flex-direction:column; gap:6px; background:#fff;`)}>
+      <div style={css('display:flex; align-items:center; gap:8px;')}>
+        <span style={css(`font-size:10px; font-weight:700; color:${palette.tag}; background:${palette.tagBg}; border-radius:2px; padding:2px 7px;`)}>{palette.tagText}</span>
+        <span style={css('font-size:13px; font-weight:700; color:#171717; line-height:1.4;')}>{fd.title}</span>
+      </div>
+      <div style={css('font-size:11px; color:#64748b; line-height:1.6;')}>{fd.body}</div>
+      <div style={css('display:flex; align-items:flex-start; gap:6px; margin-top:2px; padding-top:7px; border-top:1px dashed #eef1f4;')}>
+        <span style={css('font-size:10px; font-weight:700; color:#94a3b8; white-space:nowrap; padding-top:1px;')}>打ち手</span>
+        <span style={css('font-size:12px; color:#334155; line-height:1.6;')}>{fd.action}</span>
+      </div>
+    </div>
+  );
+}
+
+function CouponCell({ lbl, val, sub, unit, accent }: { lbl: string; val: string; sub: string; unit?: string; accent?: string }) {
+  return (
+    <div style={css('padding:14px 16px; border-right:1px solid #f1f5f9; border-bottom:1px solid #f1f5f9;')}>
+      <div style={css('font-size:11px; color:#64748b;')}>{lbl}</div>
+      <div className="tnum" style={css(`font-size:24px; font-weight:700; line-height:1.25; color:${accent ?? '#171717'};`)}>{val}<span style={css('font-size:13px; color:#94a3b8; font-weight:700;')}>{unit ? ' ' + unit : ''}</span></div>
+      <div style={css('font-size:10px; color:#94a3b8;')}>{sub}</div>
     </div>
   );
 }

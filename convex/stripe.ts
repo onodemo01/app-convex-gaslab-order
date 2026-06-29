@@ -16,13 +16,33 @@ export const createTableCheckoutSession = action({
     const key = process.env.STRIPE_SECRET_KEY;
     if (!key) throw new Error('STRIPE_SECRET_KEY 未設定');
 
+    const stripe = new Stripe(key);
+
+    const existing = await ctx.runQuery(internal.sessions.getGuestSettleInfo, {
+      tableSessionId: args.sessionId,
+      slug: args.slug,
+      tableToken: args.tableToken,
+    });
+    if (!existing) throw new Error('セッションが見つかりません');
+
+    // 会計処理中で Checkout がまだ有効なら、その URL を返す（戻る・タブ閉じで Stripe に進めない問題への対処）。
+    if (existing.settleStatus === 'charging' && existing.stripeSessionId) {
+      try {
+        const cs = await stripe.checkout.sessions.retrieve(existing.stripeSessionId);
+        if (cs.status === 'open' && cs.url) return { url: cs.url };
+      } catch {
+        /* 古いセッション取得失敗 → 新規作成へ */
+      }
+    }
+
+    const wasCharging = existing.settleStatus === 'charging';
+
     const info = await ctx.runMutation(internal.sessions.beginTableSettle, {
       tableSessionId: args.sessionId,
       slug: args.slug,
       tableToken: args.tableToken,
     });
 
-    const stripe = new Stripe(key);
     const base = process.env.APP_BASE_URL ?? 'http://127.0.0.1:3000';
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
@@ -41,9 +61,7 @@ export const createTableCheckoutSession = action({
         tableSessionId: args.sessionId,
         billTotal: String(info.billTotal),
       },
-      // 未払い放置で会計ロックが固着しないよう最短(30分)で期限切れ→webhookで自動解除。
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
-      // 決済後の戻り先にセッションIDを載せ、完了画面を「その会計」に固定（新規セッションを作らない）。
       success_url: `${base}/t/${args.slug}/${args.tableToken}?paid=1&s=${args.sessionId}`,
       cancel_url: `${base}/t/${args.slug}/${args.tableToken}?canceled=1`,
     };
@@ -56,12 +74,22 @@ export const createTableCheckoutSession = action({
       sessionParams.customer = customer.id;
     }
 
-    const session = await stripe.checkout.sessions.create(sessionParams);
-    await ctx.runMutation(internal.sessions.attachStripeSession, {
-      tableSessionId: args.sessionId,
-      stripeSessionId: session.id,
-    });
-    return { url: session.url };
+    try {
+      const session = await stripe.checkout.sessions.create(sessionParams);
+      await ctx.runMutation(internal.sessions.attachStripeSession, {
+        tableSessionId: args.sessionId,
+        stripeSessionId: session.id,
+      });
+      if (!session.url) throw new Error('Stripe Checkout の URL が取得できませんでした');
+      return { url: session.url };
+    } catch (err) {
+      // 初回の会計ロック直後に Stripe 作成が失敗した場合は固着を防ぐためロック解除。
+      if (!wasCharging) {
+        await ctx.runMutation(internal.sessions.releaseTableSettle, { tableSessionId: args.sessionId });
+      }
+      const msg = err instanceof Error ? err.message : 'Stripe Checkout の作成に失敗しました';
+      throw new Error(msg);
+    }
   },
 });
 
