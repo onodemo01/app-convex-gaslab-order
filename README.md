@@ -25,6 +25,8 @@ npm run dev   # Convex(ローカル) + Vite → http://127.0.0.1:3000
 
 ## 本番公開
 
-`docs/seminar/README.md`（簡易・テストモード手順）。
-**Stripe 等のキーは Convex の env**（`.env.local` ではアクションに届かない）。
+1. **[クローンから自分用環境をつくる.md](docs/seminar/クローンから自分用環境をつくる.md)** … GitHub 取得・環境変数の手入力方針
+2. **[README.md](docs/seminar/README.md)** … Convex / Stripe / Vercel の詳細手順（テストモード）
+
+**Stripe 等のキーは Convex の env**（`.env.local` ではアクションに届かない）。ダッシュボードで手入力してください。
 
