@@ -5,7 +5,7 @@ import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import Stripe from 'stripe';
 
-// 卓会計: 客が卓から Stripe Checkout で支払う（card + PayPay）。
+// 卓会計: 客が卓から Stripe Checkout で支払う（既定は card。PayPay は STRIPE_ENABLE_PAYPAY=true で追加）。
 export const createTableCheckoutSession = action({
   args: {
     sessionId: v.id('tableSessions'),
@@ -45,9 +45,14 @@ export const createTableCheckoutSession = action({
 
     const base = process.env.APP_BASE_URL ?? 'http://127.0.0.1:3000';
 
+    const paymentMethodTypes: Stripe.Checkout.SessionCreateParams['payment_method_types'] =
+      process.env.STRIPE_ENABLE_PAYPAY === 'true'
+        ? (['card', 'paypay'] as Stripe.Checkout.SessionCreateParams['payment_method_types'])
+        : ['card'];
+
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
-      payment_method_types: ['card', 'paypay'] as Stripe.Checkout.SessionCreateParams['payment_method_types'],
+      payment_method_types: paymentMethodTypes,
       line_items: info.lineItems.map((li) => ({
         quantity: li.quantity,
         price_data: {

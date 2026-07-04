@@ -349,9 +349,11 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 
 簡易版は「ステップ4」まででOKです。以下は本番運用に近づけたい人向け。
 
-### 付録A：Stripe の Webhook（会計を最後まで自動で通す）
+### 付録A：Stripe の Webhook（任意・より速い会計完了）
 
-決済完了を Stripe からアプリに通知させ、卓を自動で「会計済み」にします。
+> **標準手順では Webhook は不要です。** テスト決済後、客スマホが Stripe から戻るとアプリが支払い状態を自動確認し、会計済みにします。Webhook は Stripe から裏側で即通知させたい場合の追加設定です。
+
+決済完了を Stripe からアプリに通知させ、卓を自動で「会計済み」にします（客が戻る前でも反映）。
 
 1. Convex の HTTP アドレスを確認：**Convex ダッシュボード → Settings → URL & Deploy Key** の
    **HTTP Actions URL**（`https://〇〇.convex.site`）
@@ -378,10 +380,13 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
    - `RESEND_FROM` = 送信元（例 `onboarding@resend.dev`）
 3. Stripe Checkout で客がメールアドレスを入力する設定（Webhook 経由で捕捉）
 
-### 付録C：PayPay を有効化
+### 付録C：PayPay を有効化（任意）
 
-Stripe ダッシュボード（テスト）→ **設定 → 支払い方法** で **PayPay** をオンにすると、
-会計画面に PayPay が並びます（テスト環境で挙動を確認できます）。📸 **[C-1]**
+既定の Checkout は**カードのみ**です。PayPay も並べたい場合:
+
+1. Stripe ダッシュボード（テスト）→ **設定 → 支払い方法** で **PayPay** をオン 📸 **[C-1]**
+2. Convex の Environment Variables に `STRIPE_ENABLE_PAYPAY` = `true` を追加（**Production**）
+3. 再度デプロイ後、会計画面に PayPay が並びます（テスト環境で挙動を確認できます）
 
 ### 付録D：卓QRの表示（占有ロック方式・重要）
 

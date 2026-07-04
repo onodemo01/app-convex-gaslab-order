@@ -14,11 +14,10 @@
 #   - npx convex login 済み / vercel login 済み / vercel link 済み
 #   - どこから実行してもOK（自動で repo 直下へ移動）
 # 任意の環境変数:
-#   PUBLIC_URL  最後の動作検証に使う公開URL（既定: https://gaslab-order.vercel.app）
+#   PUBLIC_URL  検証に使う公開URL（未指定なら vercel deploy の出力から自動取得）
 #
 set -euo pipefail
 
-PUBLIC_URL="${PUBLIC_URL:-https://gaslab-order.vercel.app}" # 検証用の公開URL
 SHELL_HTML="_shell.html"                                   # SPA shell のファイル名
 
 # --- repo 直下へ移動（このスクリプトの1つ上） ---
@@ -52,9 +51,21 @@ cat > .vercel/output/config.json <<JSON
 JSON
 
 echo "▶ [3/4] プレビルド成果物を本番公開"
-vercel deploy --prebuilt --prod --yes
+DEPLOY_LOG="$(mktemp)"
+trap 'rm -f "$DEPLOY_LOG"' EXIT
+vercel deploy --prebuilt --prod --yes 2>&1 | tee "$DEPLOY_LOG"
+
+if [ -z "${PUBLIC_URL:-}" ]; then
+  PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9._-]+\.vercel\.app' "$DEPLOY_LOG" | tail -1 || true)"
+fi
 
 echo "▶ [4/4] 公開URLの検証（主要ルートが 200 か）"
+if [ -z "${PUBLIC_URL:-}" ]; then
+  echo "⚠ 公開URLを自動取得できませんでした。vercel deploy の出力を確認し、ブラウザで開いてください。" >&2
+  echo "   検証をスキップします（PUBLIC_URL=https://あなた.vercel.app ./scripts/deploy.sh で再検証可）。" >&2
+  exit 0
+fi
+
 fail=0
 for p in / /floor /kitchen /menu /qr /analytics /demo "/t/gaslab/verifytoken"; do
   code="$(curl -sS -o /dev/null -w "%{http_code}" "$PUBLIC_URL$p" || echo "000")"
@@ -69,4 +80,5 @@ fi
 
 echo ""
 echo "✅ デプロイ完了: $PUBLIC_URL"
-echo "   （Stripe テスト決済まで通すには Convex prod の STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET を本人が設定）"
+echo "   次: Convex prod に STRIPE_SECRET_KEY と APP_BASE_URL（上記URL）を設定"
+echo "   （Webhook 未設定でもテスト決済後は自動で会計完了します。任意で STRIPE_WEBHOOK_SECRET）"

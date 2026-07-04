@@ -214,8 +214,35 @@ function GuestTableContent({
     if (session?.issuedCouponExpiresAt) setRevealedCouponExpiresAt(session.issuedCouponExpiresAt);
   }, [session?.issuedCouponExpiresAt]);
 
-  // 会計が成立したか（Stripe webhook 反映後に true）。
+  // 会計が成立したか（Webhook または recoverGuestCheckout 反映後に true）。
   const settledNow = session?.settleStatus === 'succeeded' || session?.closedAt != null;
+
+  // Stripe 復帰後: Webhook 未設定でも Checkout の支払い状態を問い合わせて会計を確定する。
+  useEffect(() => {
+    if (!showingCompleted || !session) return;
+    if (session.settleStatus !== 'charging') return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 15;
+
+    const tick = async () => {
+      if (cancelled || attempts >= maxAttempts) return;
+      attempts += 1;
+      try {
+        await recover({ sessionId, slug, tableToken });
+      } catch {
+        /* Stripe 未設定・一時エラーは次回リトライ */
+      }
+    };
+
+    void tick();
+    const iv = setInterval(() => void tick(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [showingCompleted, session?.settleStatus, sessionId, slug, tableToken, recover, session]);
 
   // 会計完了 → 数秒「ありがとうございました」を見せてからお別れ画面へ切り替える
   // （可能ならタブも閉じる。スクリプトで開いたタブ以外はブラウザが閉じさせないので、お別れ画面が最終表示になる）。
@@ -668,7 +695,7 @@ function GuestTableContent({
                 ) : (
                   <>
                     <div style={css('white-space:nowrap; font-size:14px; font-weight:700; color:#b45309;')}>お支払いを確認しています…</div>
-                    <div style={css('font-size:12px; color:#b45309; line-height:1.6;')}>この画面のままお待ちください（自動で完了します）。</div>
+                    <div style={css('font-size:12px; color:#b45309; line-height:1.6;')}>お支払いを確認しています。この画面のままお待ちください。</div>
                   </>
                 )}
               </div>

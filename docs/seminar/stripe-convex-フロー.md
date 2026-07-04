@@ -94,7 +94,7 @@ sequenceDiagram
 |---|---|
 | 「会計の開始に失敗」 | A② `STRIPE_SECRET_KEY` 未設定/dev側に入れた |
 | Stripe 画面に飛ぶが戻りが変 | `APP_BASE_URL` 未設定/誤り |
-| 支払えるが「会計済み」にならない | A③ `STRIPE_WEBHOOK_SECRET` 未設定、または Stripe 側 Webhook URL/イベント誤り（復路断） |
+| 支払えるが「会計済み」にならない | まずページ再読込（自動で支払い確認）。改善しなければ A③ `STRIPE_WEBHOOK_SECRET` または `APP_BASE_URL` 誤り |
 
 > Webhook の健全性は、署名なしで叩いて **400** が返れば「ルートが存在し検証も効いている」サイン：
 > `curl -X POST -H "stripe-signature: x" --data '{}' https://jovial-fish-917.convex.site/stripe/webhook`
