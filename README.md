@@ -1,32 +1,56 @@
-# gaslab-order
+# 卓注文アプリ（セミナー有料特典）
 
-卓注文アプリ（本番）。客がスマホで注文 → キッチン・ホールにリアルタイム同期 → Stripe で会計。
-`table-order` の実証済みバックエンドを土台に、刷新UIを**役割別の独立画面**として再構築した。
-スタック: Convex + TanStack Start + Stripe（card / PayPay）。認証は単店舗固定キオスク（ログインなし）。
+GASLAB登竜門ウェビナー「テーブル注文アプリを自分のURLで公開する」の**有料特典**です。
 
-## 画面（各端末で1画面）
+客がスマホで注文 → キッチン・ホールにリアルタイム同期 → Stripe **テスト決済**まで動くデモアプリと、公開手順書が一式入っています。
 
-- 客スマホ `/t/{slug}/{tableToken}` … テンキー注文・2段階会計
-- キッチン `/kitchen` … KDS（調理中／提供済み・タップ提供）
-- ホール `/floor` … カンバン（空席/着席中/会計済み/清掃中）
-- 商品マスタ `/menu` ／ 卓QR `/qr` ／ 分析 `/analytics`
-- 同時表示 `/demo`（セミナー用）／ 入口ハブ `/`
+> **このリポジトリについて**
+> - GitHub 上は **public（誰でも clone 可能）** ですが、**URL は有料参加者にのみ案内**します。Peatix / connpass 以外で共有しないでください。
+> - **デモ・学習向け**です。店舗の本番営業・実決済の設定は含みません。
 
-## 開発
+---
+
+## 最初に読むもの（この順で）
+
+1. **[クローンから自分用環境をつくる.md](docs/seminar/クローンから自分用環境をつくる.md)** … GitHub から取得 → 自分専用 Convex / Stripe / Vercel の作り方
+2. **[README.md](docs/seminar/README.md)** … Convex・Stripe・Vercel の詳細手順（スクショ付き）
+3. （任意）**[stripe-convex-フロー.md](docs/seminar/stripe-convex-フロー.md)** … 決済と Convex の値の渡し方
+
+セミナー当日に clone する必要はありません。**セミナー後**、上記 1 から進めてください（所要 約40〜60分）。
+
+---
+
+## ゴール
+
+`https://あなたの名前.vercel.app` で、自分専用のテーブル注文デモが動く状態（Stripe は**テストモード**・実際の課金なし）。
+
+---
+
+## 用意するもの
+
+- パソコン（Mac または Windows）とインターネット
+- **Node.js 20 LTS 以上**（`node -v` で確認。18 でも動く場合あり）… <https://nodejs.org/>
+- **Git**（clone 用）
+- 無料アカウント: **Convex** / **Stripe**（テストモード）/ **Vercel**
+- **GitHub アカウント** … Convex・Vercel のログイン用（clone 自体はアカウントなしでも可）
+
+---
+
+## クイックスタート
 
 ```bash
+git clone https://github.com/onodemo01/app-convex-gaslab-order.git
+cd app-convex-gaslab-order
 npm install
-npm run dev   # Convex(ローカル) + Vite → http://127.0.0.1:3000
 ```
 
-- このリポ内で `npx convex dev` のローカルデプロイが構成済み（`.env.local`）。
-- デモデータは入口の「デモデータ投入」ボタン（または `npx convex run dev:seedDemo`）。
-- リセットは `npx convex run dev:resetDemo`。
+あとは [クローンから自分用環境をつくる.md](docs/seminar/クローンから自分用環境をつくる.md) のステップ3以降へ。
 
-## 本番公開
+> ⚠️ 講師デモの Convex / Stripe / Vercel は**使わない**でください。必ず**自分のアカウント**で新規作成します。
 
-1. **[クローンから自分用環境をつくる.md](docs/seminar/クローンから自分用環境をつくる.md)** … GitHub 取得・環境変数の手入力方針
-2. **[README.md](docs/seminar/README.md)** … Convex / Stripe / Vercel の詳細手順（テストモード）
+---
 
-**Stripe 等のキーは Convex の env**（`.env.local` ではアクションに届かない）。ダッシュボードで手入力してください。
+## 困ったとき
 
+- 手順の詳細・トラブルシュート → [docs/seminar/README.md](docs/seminar/README.md)
+- 環境変数は **Convex ダッシュボードへ手入力**（`.env.local` のコピーや講師のキー流用は不可）
