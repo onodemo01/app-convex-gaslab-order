@@ -94,10 +94,17 @@ npx convex login
 ### 3-2. クラウドにプロジェクトを作る
 
 ```bash
-npx convex dev --configure new --team <あなたのチーム名> --project gaslab-order
+npx convex dev --configure new --project gaslab-order
 ```
 
-- **チーム名** は自分のアカウント名（例 `ono`）。1人なら自動で1つだけあるはず。
+- **Team の選択**は対話で進める（1人だけなら候補が1つ → **Enter** でOK）。
+- Team の **slug（英数字・ハイフンのみ）** を使う。日本語の表示名をコマンドに貼るとターミナルで文字化けすることがある。
+- slug は [Convex ダッシュボード](https://dashboard.convex.dev) 左上の Team 名の横、または Settings で確認できる。
+- 対話を省略する場合のみ（`YOUR_TEAM_SLUG` は上記 slug に置き換え・**日本語不可**）:
+
+```bash
+npx convex dev --configure new --team YOUR_TEAM_SLUG --project gaslab-order
+```
 - **リージョンを聞かれたら**「`US East (N. Virginia)`」を選ぶ（既定でハイライト → そのまま **Enter**）。
   - 日本から近いアジアは選択肢に無い。US East が Convex の標準・実績が多く、デモのリアルタイム同期は十分速い。
 - `Convex functions ready!` と出て**接続待ち**になったら、**Ctrl+C で止める**（これで `.env.local` がクラウド向けに書き換わる）。
@@ -213,6 +220,15 @@ vercel login
 
 メールアドレスを入れ、届いた確認メールのリンクを押すとログイン完了です。
 
+複数アカウントを使っている場合は、次で「今どのアカウントか」を必ず確認します。
+
+```bash
+npx vercel whoami
+```
+
+想定したアカウント名と違う場合は、いったん `vercel logout` → `vercel login` で切り替えてください。
+（複数アカウント運用の場合は `.claude/accounts.json` の想定値を更新して運用すると事故を防げます）
+
 ### 5-2. プロジェクトを Vercel に作る
 
 プロジェクトフォルダで：
@@ -239,6 +255,12 @@ vercel link
 ```bash
 npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 ./scripts/deploy.sh
+```
+
+アカウント事故防止のため、想定アカウントを固定して実行できます。
+
+```bash
+EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
 ```
 
 `./scripts/deploy.sh` が次を**自動**でやります。

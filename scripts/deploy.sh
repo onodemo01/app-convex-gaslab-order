@@ -15,6 +15,7 @@
 #   - どこから実行してもOK（自動で repo 直下へ移動）
 # 任意の環境変数:
 #   PUBLIC_URL  検証に使う公開URL（未指定なら vercel deploy の出力から自動取得）
+#   EXPECTED_VERCEL_USER  想定する Vercel ログインユーザー（例: my-vercel-user）
 #
 set -euo pipefail
 
@@ -24,6 +25,19 @@ SHELL_HTML="_shell.html"                                   # SPA shell のファ
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
+
+echo "▶ [0/4] アカウント確認（Vercel）"
+ACTUAL_VERCEL_USER="$(npx vercel whoami 2>/dev/null | tr -d '\r' || true)"
+if [ -z "$ACTUAL_VERCEL_USER" ]; then
+  echo "✖ Vercel のログイン状態を確認できません。先に 'vercel login' を実行してください。" >&2
+  exit 1
+fi
+if [ -n "${EXPECTED_VERCEL_USER:-}" ] && [ "$ACTUAL_VERCEL_USER" != "$EXPECTED_VERCEL_USER" ]; then
+  echo "✖ Vercel アカウント不一致: 実際='$ACTUAL_VERCEL_USER' / 期待='$EXPECTED_VERCEL_USER'" >&2
+  echo "  対処: vercel logout && vercel login" >&2
+  exit 1
+fi
+echo "   Vercel user: $ACTUAL_VERCEL_USER"
 
 echo "▶ [1/4] Convex 本番へデプロイ＋クライアントを本番URLでビルド"
 # -y で dev→prod 確認をスキップ。convex がプロジェクトの prod を自動選択し、
