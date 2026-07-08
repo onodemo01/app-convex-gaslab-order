@@ -45,6 +45,8 @@ flowchart TD
 3. **Stripe → Convex**：Webhook 作成で出た `whsec_…` を Convex prod env `STRIPE_WEBHOOK_SECRET` に
 4. （別途）公開URLを `APP_BASE_URL` に
 
+> 手順書の統一ステップでは、主に **ステップ4（Stripe + env）** で使います（Webhook は付録Aの任意設定）。
+
 > ⚠️ **Stripe の Webhook 追加画面は UI 改定で「URL入力」と「イベント選択」の順序が前後します**。同じ画面内の操作なので、**どちらを先にしても結果は同じ**。選ぶイベントは必ず2つ：
 > `checkout.session.completed` と `checkout.session.expired`。
 

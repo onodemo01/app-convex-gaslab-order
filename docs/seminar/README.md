@@ -6,6 +6,7 @@
 > 📘 **はじめての方は先に** [クローンから自分用環境をつくる.md](クローンから自分用環境をつくる.md) **を読んでください。**
 > GitHub からの取得・自分専用 Convex の作成・環境変数の手入力方針をまとめています。
 > この手順書はセミナー**有料特典リポ**（public・URL は有料参加者にのみ案内）に同梱されています。
+> このファイルは **ステップ3〜6**（Convex 以降）です。ステップ1〜2（clone / `npm install`）は前述のクローン資料で実施してください。
 
 - 想定: プログラミング未経験でも、上から順にそのまま進めれば公開できる
 - 料金: この手順の範囲はすべて**無料／テストモード**（実際のお金は動きません）
@@ -54,14 +55,15 @@
 
 > 🖥 「ターミナル」の開き方
 > - Mac: アプリ「ターミナル」
-> - Windows: 「PowerShell」
+> - Windows: **Git Bash**（Git for Windows に付属）
+> - `./scripts/deploy.sh` は **PowerShell では動きません**
 > どちらも、**クローンしたプロジェクトフォルダ**の中で開いてください（VS Code を使っている人は「ターミナル」メニューから）。
 
 ---
 
-## ステップ0：プロジェクトを動かせる状態にする
+## ステップ2（確認）：`npm install` が未実施なら先に実行
 
-ターミナルで、プロジェクトフォルダにいることを確認して次を実行します。
+ステップ2は [クローンから自分用環境をつくる.md](クローンから自分用環境をつくる.md) で実施済みです。未実施の場合のみ次を実行してください。
 
 ```bash
 npm install
@@ -71,15 +73,9 @@ npm install
 > `npm install` が終わって `added 〇〇 packages` と出た画面を撮影。
 > → `images/0-1.svg`
 
-![0-1](images/0-1.svg)
+## ステップ3：Convex（頭脳）をクラウドに置く
 
-たくさん文字が流れて、最後にエラー（赤い `ERR!`）が出ていなければ成功です。
-
----
-
-## ステップ1：Convex（頭脳）をクラウドに置く
-
-### 1-1. Convex にログイン
+### 3-1. Convex にログイン
 
 ```bash
 npx convex login
@@ -95,7 +91,7 @@ npx convex login
 
 ターミナルに `Logged in` のような表示が出たらOKです。
 
-### 1-2. クラウドにプロジェクトを作る
+### 3-2. クラウドにプロジェクトを作る
 
 ```bash
 npx convex dev --configure new --team <あなたのチーム名> --project gaslab-order
@@ -122,7 +118,7 @@ npx convex deploy
 
 `Deployed Convex functions` と出れば本番側の準備OK。
 
-### 1-3. Convex ダッシュボードを開いておく
+### 3-3. Convex ダッシュボードを開いておく
 
 ブラウザで <https://dashboard.convex.dev> を開き、いま作った `gaslab-order` プロジェクトを開きます。
 あとで環境変数（Stripeキー）を入れるのでこのタブは開いたままに。
@@ -137,12 +133,12 @@ npx convex deploy
 
 ---
 
-## ステップ2：Stripe（テスト決済）を接続する
+## ステップ4：Stripe（テスト決済）を接続する
 
 > 🔁 Stripe と Convex を行き来して値を渡し合います。**どの値をどっちに入れるか**は
 > [stripe-convex-フロー.md](stripe-convex-フロー.md) のフローチャートが分かりやすいです（設定・決済の2枚）。
 
-### 2-1. Stripe にサインアップ／ログイン
+### 4-1. Stripe にサインアップ／ログイン
 
 <https://dashboard.stripe.com> を開きます。
 右上が **「テスト環境」「テストモード」** になっていることを必ず確認してください（本番だと実際に課金されます）。
@@ -153,7 +149,7 @@ npx convex deploy
 
 ![2-1](images/2-1.svg)
 
-### 2-2. テスト用のシークレットキーをコピー
+### 4-2. テスト用のシークレットキーをコピー
 
 左メニュー（または右上）の **開発者 → API キー** を開きます。
 
@@ -167,7 +163,7 @@ npx convex deploy
 
 > ⚠️ シークレットキーはパスワードと同じです。人に見せたり、撮った画像をそのまま公開したりしないこと。
 
-### 2-3. Convex にキーを登録（★本番=Production 側に入れる）
+### 4-3. Convex にキーを登録（★本番=Production 側に入れる）
 
 > ⚠️ **いちばんのつまづきポイント：dev と prod を間違えない**
 > 公開アプリ（Vercel）が使うのは Convex の **本番（Production）デプロイ**。
@@ -180,7 +176,7 @@ npx convex deploy
 | 名前（Name） | 値（Value） |
 |---|---|
 | `STRIPE_SECRET_KEY` | コピーした `sk_test_...` |
-| `APP_BASE_URL` | いまは仮で `http://localhost:3000`（ステップ3でVercelのURLに直します） |
+| `APP_BASE_URL` | いまは仮で `http://localhost:3000`（ステップ5-4でVercelのURLに直します） |
 
 **方法B：コマンド（`--prod` を必ず付ける）**
 
@@ -204,11 +200,11 @@ npx convex env set STRIPE_SECRET_KEY sk_test_... --prod
 
 ---
 
-## ステップ3：Vercel に画面を公開する
+## ステップ5：Vercel に画面を公開する
 
 ここでは **Vercel CLI**（ターミナルから公開する方法）で進めます。
 
-### 3-1. Vercel CLI を入れてログイン
+### 5-1. Vercel CLI を入れてログイン
 
 ```bash
 npm install -g vercel
@@ -217,7 +213,7 @@ vercel login
 
 メールアドレスを入れ、届いた確認メールのリンクを押すとログイン完了です。
 
-### 3-2. プロジェクトを Vercel に作る
+### 5-2. プロジェクトを Vercel に作る
 
 プロジェクトフォルダで：
 
@@ -234,7 +230,7 @@ vercel link
 
 ![3-2](images/3-2.svg)
 
-### 3-3. 公開する（プレビルドSPA方式）
+### 5-3. 公開する（プレビルドSPA方式）
 
 このアプリは TanStack Start の **SPA**（画面はブラウザで描画）です。Vercel には SSR アダプタが無いため、**手元でビルドして成果物だけアップする「プレビルド方式」**で公開します（**Convex Deploy Key は不要**）。
 
@@ -269,9 +265,9 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 > **SPA＋プレビルド**が最も堅実です。旧来の「Deploy Key＋`vercel --prod`」方式は
 > **付録G**に参考として残しています。詳細は `docs/sessions/2026-06-28-本番デプロイとSPA化.md`。
 
-### 3-4. APP_BASE_URL を本物のURLに直す
+### 5-4. APP_BASE_URL を本物のURLに直す
 
-ステップ2-3で仮に入れた `APP_BASE_URL` を、いま出た Vercel のURLに変更します。
+ステップ4-3で仮に入れた `APP_BASE_URL` を、いま出た Vercel のURLに変更します。
 
 - **Convex ダッシュボード → Settings → Environment Variables → `APP_BASE_URL`** を編集
 - 値を `https://〇〇.vercel.app`（末尾スラッシュなし）に
@@ -286,9 +282,9 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 
 ---
 
-## ステップ4：動作確認（注文 → キッチン → テスト決済）
+## ステップ6：動作確認（注文 → キッチン → テスト決済）
 
-### 4-1. デモデータを入れる
+### 6-1. デモデータを入れる
 
 公開URL（入口画面）の下のほうにある **「デモデータ投入」** ボタンを押します。
 店舗「トラットリア ガスラボ」と卓・メニューが入ります。
@@ -299,7 +295,7 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 
 ![4-1](images/4-1.png)
 
-### 4-2. 2画面を並べてリアルタイムを体験
+### 6-2. 2画面を並べてリアルタイムを体験
 
 - ブラウザのタブを2つ開く
   - タブA：入口の **「客スマホ（例: A1）」** → 注文画面
@@ -313,7 +309,7 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 
 ![4-2](images/4-2.png)
 
-### 4-3. テスト決済を試す
+### 6-3. テスト決済を試す
 
 客スマホで「会計へ進む」→「会計する」を押すと Stripe の決済画面が開きます。
 **テスト用カード番号**で支払えます（実際のお金は動きません）。
@@ -327,8 +323,8 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 
 ![4-3](images/4-3.svg)
 
-支払い後、客スマホが「お支払いを確認しています…」と出ます。
-**完全に「会計済み」まで自動で進めるには、付録Aの Webhook 設定が必要です**（テスト体験だけならここまででOK）。
+支払い後、客スマホが「お支払いを確認しています…」と出ます。数秒で自動的に会計済みに切り替わります。  
+切り替わらない場合はページを再読込し、`APP_BASE_URL` / `STRIPE_SECRET_KEY` を確認してください。より速く安定させたい場合は付録Aの Webhook を設定します。
 
 ---
 
@@ -339,15 +335,15 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 | `node -v` でエラー | Node.js が未インストール。<https://nodejs.org/> の LTS を入れる |
 | `npm install` で赤いエラー | フォルダを間違えている可能性。`gaslab-order` フォルダの中で実行しているか確認 |
 | 入口は出るが「店舗未設定」 | 「デモデータ投入」を押す／Convex のデプロイが終わっているか確認 |
-| 会計ボタンで「会計の開始に失敗」 | Convex の `STRIPE_SECRET_KEY` が未設定・打ち間違い。ステップ2-3を見直す |
-| 決済後に「会計済み」にならない | 正常。完全自動化には**付録A（Webhook）**が必要 |
+| 会計ボタンで「会計の開始に失敗」 | Convex の `STRIPE_SECRET_KEY` が未設定・打ち間違い。ステップ4-3を見直す |
+| 決済後に「会計済み」にならない | まずページ再読込（自動で支払い確認）。改善しなければ `APP_BASE_URL` / `STRIPE_SECRET_KEY` を見直し、必要に応じて付録A（Webhook）を設定 |
 | Vercel デプロイが失敗 | `./scripts/deploy.sh` をプロジェクトフォルダで実行しているか確認。`npx convex login` 済みか、`vercel link` 済みか |
 
 ---
 
 ## 付録（任意・余裕があれば）
 
-簡易版は「ステップ4」まででOKです。以下は本番運用に近づけたい人向け。
+簡易版は「ステップ6」まででOKです。以下は本番運用に近づけたい人向け。
 
 ### 付録A：Stripe の Webhook（任意・より速い会計完了）
 
@@ -421,7 +417,7 @@ npx convex login        # ブラウザで GitHub/Google 認証 → Approve
 
 ### 付録G：旧デプロイ方式（Deploy Key ＋ `vercel --prod`）※参考
 
-> ⚠️ **現在の標準はステップ3のプレビルドSPA方式（`./scripts/deploy.sh`）です。** 以下は参考記録。
+> ⚠️ **現在の標準はステップ5のプレビルドSPA方式（`./scripts/deploy.sh`）です。** 以下は参考記録。
 > この方式は Vercel の**クラウドビルド**で `npx convex deploy --cmd 'npm run build'` を走らせるもので、
 > このアプリ（SSR アダプタ無しの SPA）では**静的化されて全ルート 404 になる**ため、そのままでは使えません。
 > 仕組みと経緯は `docs/sessions/2026-06-28-本番デプロイとSPA化.md` を参照。
