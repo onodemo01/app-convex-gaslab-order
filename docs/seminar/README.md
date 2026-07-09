@@ -541,6 +541,27 @@ EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
 
 → クラウドビルドで SSR を正しく関数化できないのが本質的な問題のため、**プレビルド方式に移行済み**。
 
+### 付録H：分析の「AIでまとめる」（Anthropic）— 任意・既定はオフ
+
+> **標準手順では設定不要です。** 分析画面の集計と、**ルールベースのインサイト（気づき＋打ち手）はキー無しで動きます**。
+> `ANTHROPIC_API_KEY` を設定したときだけ、**「AIでまとめる」ボタン**で店長向けの自然文サマリーが出せます。
+> 未設定でも**エラーにはならず**「AIキー未設定」の案内が出るだけなので、無理に入れる必要はありません。
+
+有効化したい場合のみ：
+
+1. <https://console.anthropic.com> でアカウント作成 → **API キー（`sk-ant-...`）** を発行
+2. **Convex ダッシュボード → Production → Settings → Environment Variables → Add**（Stripe のキーと同じ画面）で追加：
+
+| 名前（Name） | 値（Value） |
+|---|---|
+| `ANTHROPIC_API_KEY` | 発行した `sk-ant-...` |
+| `ANTHROPIC_MODEL`（任意） | 既定は `claude-haiku-4-5`（安価）。変えたいときだけ |
+
+3. 分析画面の **「AIでまとめる」** を押すと、要約が生成されます。
+
+> 💰 **お金の注意**：Anthropic のキーは**使った分だけ課金**です（`claude-haiku-4-5` は安価ですが、ボタンを押すたびに小額かかります）。**空のままなら課金は一切ありません。**
+> 🔒 キーは秘密。**Stripe と同じく Convex（Production）にだけ入れ、チャットや AI に貼らない・フロント（Vercel）には置かない。**
+
 ---
 
 ## 📋 公開後によく使うコマンド早見表
