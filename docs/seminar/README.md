@@ -198,12 +198,19 @@ npx convex deploy
 
 1. Convex ダッシュボード上部の**デプロイ切替**で **「Production」** を選ぶ
 2. **Settings → Environment Variables → Add** を開く（画面に `Production` と出ているか確認）
-3. 次の2つを**手で**登録：
+3. 次の2つを**1つずつ手で**登録します。**変数名は下のコードブロック右上のコピーボタンでコピー**して、Convex の「Name」欄にそのまま貼れます（打ち間違い防止）。値は自分のものを入れます。
 
-| 名前（Name） | 値（Value） |
-|---|---|
-| `STRIPE_SECRET_KEY` | コピーした `sk_test_...` |
-| `APP_BASE_URL` | いまは仮で `http://localhost:3000`（**ステップ5-4で本物のURLに直します**） |
+   **① 1つ目** — 下の名前を「Name」に貼り、値は コピーした `sk_test_...`：
+
+   ```
+   STRIPE_SECRET_KEY
+   ```
+
+   **② 2つ目** — 下の名前を「Name」に貼り、値は いまは仮で `http://localhost:3000`（**ステップ5-4で本物のURLに直します**）：
+
+   ```
+   APP_BASE_URL
+   ```
 
 <details>
 <summary>方法B：コマンドで入れる（<code>--prod</code> を必ず付ける）</summary>
@@ -489,7 +496,12 @@ EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
    - ※ Stripe の UI 改定で「URL 入力」と「イベント選択」の**順序が前後する**ことがあります。同じ追加画面内の操作なので、どちらを先にしてもOK。
    - 📸 **[A-1]** Webhook 追加画面 → `images/A-1.svg`
 3. 作成後に出る **署名シークレット**（`whsec_...`）をコピー
-4. **Convex の Environment Variables（Production）** に `STRIPE_WEBHOOK_SECRET` = `whsec_...` を追加
+4. **Convex の Environment Variables（Production）→ Add** で、下の名前を「Name」に貼り、値に `whsec_...` を入れて追加：
+
+   ```
+   STRIPE_WEBHOOK_SECRET
+   ```
+
    - 📸 **[A-2]** 追加後の画面 → `images/A-2.svg`
 
 これで、客が戻ってこなくても、決済後に自動で「会計済み」になります。
