@@ -351,6 +351,11 @@ EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
 
 ### 6-3. テスト決済を試す
 
+> ⚠️ **決済テストは「実機（スマホでQR）」か「新しいタブに直接URL」で行う。管理画面のプレビュー枠の中ではダメ。**
+> プレビューはお客さん画面を**枠（iframe）の中に埋め込んで**表示しています。Stripe の決済ページは
+> セキュリティ仕様で**枠の中では絶対に開かず、真っ白**になります（コンソールに `Stripe Checkout is not able to run in an iFrame`）。
+> これは**バグではありません**。実際のお客さんは QR をカメラで読んで画面全体で開くので問題なく決済できます。
+
 客スマホで「会計へ進む」→「会計する」を押すと Stripe の決済画面が開きます。
 **テスト用カード番号**で支払えます（実際のお金は動きません）。
 
@@ -362,6 +367,10 @@ EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
 ![4-3](images/4-3.png)
 
 支払い後、客スマホが「お支払いを確認しています…」と表示し、数秒で自動的に会計済みへ切り替わります。
+
+> 🔔 **この自動確認は「客がこの画面に戻ってきた」ときだけ動きます。** スマホのお客さんは支払い後に
+> タブを閉じて**戻ってこないことも多く**、その場合この自動確認は走りません。**支払ったのに確実に
+> 「会計済み」にするには、Webhook（下の付録A・推奨）を設定してください。**人に使わせる/本番では実質必須です。
 
 > 📸 **[4-3b] 会計完了** … 客スマホが「お会計が完了しました」に切り替わった画面（続けてアンケート→次回クーポン）→ `images/4-3b.png`
 
@@ -380,7 +389,7 @@ EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
 
 これで「**客スマホ → Stripe → Convex**」の配線がすべて正しいと確認できます。
 </details>
-切り替わらないときはページを再読込し、`APP_BASE_URL` / `STRIPE_SECRET_KEY` を確認してください（より速く安定させたい場合は付録Aの Webhook）。
+切り替わらないときは、まずページを再読込し `APP_BASE_URL`（`https://` 付き・末尾スラッシュ無し）/ `STRIPE_SECRET_KEY` を確認。**それでも直らない・客が戻ってこない運用なら Webhook（付録A・推奨）を設定します。** Webhook 設定済みなのに切り替わらないときは、登録した URL の末尾に **`/stripe/webhook` が付いているか**を必ず確認してください（付録A の 🚨 参照）。
 
 > ✅ **ステップ6の確認（＝全部完了！）**：注文がキッチンに出て、テストカードで会計が「会計済み」になった。
 > 🎉 これで**自分の卓注文アプリがインターネットに公開されました。**
@@ -396,7 +405,8 @@ EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
 | `npx convex` で進めない | まず `npx convex login` 済みか。`Approve` を押したか |
 | 入口は出るが「店舗未設定」 | ステップ6-1の「デモデータ投入」を押す／Convex のデプロイが終わっているか |
 | 会計ボタンで「会計の開始に失敗」 | `STRIPE_SECRET_KEY` が**本番（Production）**に入っていない or 打ち間違い。**ステップ4-3を見直す** |
-| 決済後に「会計済み」にならない | まずページ再読込。改善しなければ `APP_BASE_URL`（末尾スラッシュ無し）/ `STRIPE_SECRET_KEY` を見直し、必要なら付録A（Webhook） |
+| 決済後に「会計済み」にならない | ①まずページ再読込。②`APP_BASE_URL`（`https://`付き・末尾スラッシュ無し）/ `STRIPE_SECRET_KEY` を見直す。③**客が支払い後に画面へ戻らない運用なら Webhook（付録A・推奨）を設定**。④Webhook 設定済みなのにダメなら、登録 URL の末尾 **`/stripe/webhook` が抜けていないか**を確認（ドメインだけだと Stripe は成功表示でもアプリに届かない・付録A🚨） |
+| 管理画面プレビューで会計を押すと真っ白 | 正常です。プレビューは iframe で、Stripe 決済は枠内では開けません（ステップ6-3 の ⚠️）。決済テストは実機QR か新タブ直接URLで |
 | Vercel デプロイが失敗 | `./scripts/deploy.sh` をプロジェクトフォルダで実行しているか。`npx convex login` 済みか、`vercel link` 済みか |
 | 公開URLは出たが全ページ真っ白／404 | ステップ5-3を上から再実行（プレビルド方式）。旧方式で公開していないか確認（付録G） |
 
@@ -456,24 +466,37 @@ EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
 
 簡易版は「ステップ6」まででOKです。以下は本番運用に近づけたい人向け。
 
-### 付録A：Stripe の Webhook（任意・より速い会計完了）
+### 付録A：Stripe の Webhook（★推奨・実運用では実質必須）
 
-> **標準手順では Webhook は不要です。** テスト決済後、客スマホが Stripe から戻るとアプリが支払い状態を自動確認し、会計済みにします。Webhook は Stripe から裏側で即通知させたい場合の追加設定です。
+> **確実に「会計済み」にするための設定です。** テスト決済後、客スマホがアプリ画面に**戻ってくれば**
+> アプリが支払い状態を自動確認して会計済みにします（保険）。でもスマホ客は支払い後にタブを閉じて
+> **戻らないことも多く**、そのときは Webhook が無いと会計が確定しません。**ただ一度試すだけなら省略可ですが、
+> 人に使わせる/本番で使うなら必ず設定してください。**
 
-決済完了を Stripe からアプリに通知させ、卓を自動で「会計済み」にします（客が戻る前でも反映）。
+決済完了を Stripe からアプリに通知させ、卓を自動で「会計済み」にします（客が戻らなくても反映）。
 
 1. Convex の HTTP アドレスを確認：**Convex ダッシュボード → Settings → URL & Deploy Key** の
    **HTTP Actions URL**（`https://〇〇.convex.site`）
+   - 💡 **`.cloud` ではなく `.site`。** Convex には2種類のURLがあり、アプリ本体の通信は `.cloud`、
+     **Webhook など外部からの通知の受け口は `.site`（HTTP Actions URL）** です。頭の名前は同じで**末尾だけ違います**。
 2. **Stripe ダッシュボード（テスト）→ 開発者 → Webhook → エンドポイントを追加**
    - URL：`https://〇〇.convex.site/stripe/webhook`
+   - > 🚨 **末尾の `/stripe/webhook` を絶対に省略しない。**
+     > ドメインだけ（`https://〇〇.convex.site`）で登録すると、**Stripe 側は「成功」と表示されるのに通知はアプリに届かず**、
+     > 「支払ったのに会計済みにならない」という一番わかりにくい事故になります（実際にこれで詰まった例あり）。
+     > `.site` の後ろに `/stripe/webhook` まで入れて、初めて正しい受け口です。
    - イベント：`checkout.session.completed` と `checkout.session.expired`
    - ※ Stripe の UI 改定で「URL 入力」と「イベント選択」の**順序が前後する**ことがあります。同じ追加画面内の操作なので、どちらを先にしてもOK。
    - 📸 **[A-1]** Webhook 追加画面 → `images/A-1.svg`
 3. 作成後に出る **署名シークレット**（`whsec_...`）をコピー
-4. **Convex の Environment Variables** に `STRIPE_WEBHOOK_SECRET` = `whsec_...` を追加
+4. **Convex の Environment Variables（Production）** に `STRIPE_WEBHOOK_SECRET` = `whsec_...` を追加
    - 📸 **[A-2]** 追加後の画面 → `images/A-2.svg`
 
-これで、決済後に客スマホが自動で「お会計が完了しました」に変わります。
+これで、客が戻ってこなくても、決済後に自動で「会計済み」になります。
+
+> ✅ **確認**：テスト決済を1回通し、**客スマホのタブを閉じても** Convex の Data でその卓が
+> `settleStatus: "succeeded"` になっていれば Webhook は正しく動いています。ならなければ、
+> 上の 🚨（URL 末尾 `/stripe/webhook`）と `STRIPE_WEBHOOK_SECRET`（Production 側）を見直してください。
 
 ### 付録B：会計メール（Resend）— デフォルトではオフ
 
