@@ -456,6 +456,9 @@ EXPECTED_VERCEL_USER=YOUR_VERCEL_USER ./scripts/deploy.sh
 
 ### Q4. Claude Code など AI エージェントに、この手順を実施させられる？
 
+**できます。AI が読んで実行する専用の手順書 [AIセットアップ手順.md](AIセットアップ手順.md) を用意しています。**
+エージェントに「`docs/seminar/AIセットアップ手順.md` を読んで、その手順どおりに進めて」と指示してください。
+
 **コマンド実行とエラー対応は任せられます。ただし次の3つは必ず人間が行います。**
 
 - ✅ **AIに任せてよい**：`git clone` / `npm install` / `npx convex deploy` / `vercel link` / `./scripts/deploy.sh` の実行、エラーの切り分け・修正
